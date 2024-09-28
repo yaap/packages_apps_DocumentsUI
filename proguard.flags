@@ -25,6 +25,14 @@
 # To prevent class not found exception in org.brotli.dec.Dictionary
 -keep final class org.brotli.dec.DictionaryData
 
+# To prevent resource fields not found exception on running DocumentsUIGoogleTests module
+-keepclassmembers class com.android.documentsui.R$* {
+    public static <fields>;
+}
+
+# Keep Apache Commons Compress classes
+-keep class org.apache.commons.compress.** { *; }
+
 # Needed for zip file interactions
 -if class * extends org.apache.commons.compress.archivers.zip.ZipExtraField
 -keep class <1> { <init>(); }
