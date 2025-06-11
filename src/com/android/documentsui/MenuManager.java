@@ -16,15 +16,20 @@
 
 package com.android.documentsui;
 
+import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
+import static com.android.documentsui.util.FlagUtils.isZipNgFlagEnabled;
+
 import android.view.KeyboardShortcutGroup;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.fragment.app.Fragment;
 
+import com.android.documentsui.archives.ArchivesProvider;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.Menus;
 import com.android.documentsui.base.RootInfo;
@@ -90,6 +95,9 @@ public abstract class MenuManager {
             return;
         }
         updateCreateDir(mOptionMenu.findItem(R.id.option_menu_create_dir));
+        if (isZipNgFlagEnabled()) {
+            updateExtractAll(mOptionMenu.findItem(R.id.option_menu_extract_all));
+        }
         updateSettings(mOptionMenu.findItem(R.id.option_menu_settings));
         updateSelectAll(mOptionMenu.findItem(R.id.option_menu_select_all));
         updateNewWindow(mOptionMenu.findItem(R.id.option_menu_new_window));
@@ -100,12 +108,25 @@ public abstract class MenuManager {
         updateShowHiddenFiles(mOptionMenu.findItem(R.id.option_menu_show_hidden_files));
         updateAddLauncherShortcut(mOptionMenu.findItem(R.id.option_menu_add_shortcut));
 
+        if (isUseMaterial3FlagEnabled()) {
+            updateModePicker(mOptionMenu.findItem(R.id.sub_menu_grid),
+                    mOptionMenu.findItem(R.id.sub_menu_list));
+        }
+
         Menus.disableHiddenItems(mOptionMenu);
         mSearchManager.updateMenu();
     }
 
     public void updateSubMenu(Menu menu) {
+        // Remove the subMenu when material3 is launched b/379776735.
+        if (isUseMaterial3FlagEnabled()) {
+            menu = mOptionMenu;
+            if (menu == null) {
+                return;
+            }
+        }
         updateModePicker(menu.findItem(R.id.sub_menu_grid), menu.findItem(R.id.sub_menu_list));
+
     }
 
     public void updateModel(Model model) {}
@@ -140,10 +161,10 @@ public abstract class MenuManager {
     }
 
     /**
-     * @see DirectoryFragment#onCreateContextMenu
-     *
      * Called when user tries to generate a context menu anchored to a file when the selection
      * doesn't contain any folder.
+     *
+     * @see DirectoryFragment#onCreateContextMenu
      *
      * @param selectionDetails
      *      containsFiles may return false because this may be called when user right clicks on an
@@ -165,14 +186,19 @@ public abstract class MenuManager {
         updateRename(rename, selectionDetails);
         updateViewInOwner(viewInOwner, selectionDetails);
 
+        if (isZipNgFlagEnabled()) {
+            updateExtractHere(menu.findItem(R.id.dir_menu_extract_here), selectionDetails);
+            updateBrowse(menu.findItem(R.id.dir_menu_browse), selectionDetails);
+        }
+
         updateContextMenu(menu, selectionDetails);
     }
 
     /**
-     * @see DirectoryFragment#onCreateContextMenu
-     *
      * Called when user tries to generate a context menu anchored to a folder when the selection
      * doesn't contain any file.
+     *
+     * @see DirectoryFragment#onCreateContextMenu
      *
      * @param selectionDetails
      *      containDirectories may return false because this may be called when user right clicks on
@@ -218,10 +244,7 @@ public abstract class MenuManager {
         Menus.setEnabledAndVisible(inspect, selectionDetails.size() == 1);
         Menus.setEnabledAndVisible(addLauncherShortcut, selectionDetails.size() == 1);
 
-        final MenuItem compress = menu.findItem(R.id.dir_menu_compress);
-        if (compress != null) {
-            updateCompress(compress, selectionDetails);
-        }
+        updateCompress(menu.findItem(R.id.dir_menu_compress), selectionDetails);
     }
 
     /**
@@ -264,6 +287,15 @@ public abstract class MenuManager {
 
     public abstract void updateKeyboardShortcutsMenu(
             List<KeyboardShortcutGroup> data, IntFunction<String> stringSupplier);
+
+    /**
+     * Called on option menu creation to instantiate the job progress item if applicable.
+     *
+     * @param menu The option menu created.
+     */
+    public void instantiateJobProgress(Menu menu) {
+        // This icon is not shown in the picker.
+    }
 
     protected void updateModePicker(MenuItem grid, MenuItem list) {
         // The order of enabling disabling menu item in wrong order removed accessibility focus.
@@ -376,6 +408,14 @@ public abstract class MenuManager {
         Menus.setEnabledAndVisible(extractTo, false);
     }
 
+    protected void updateExtractHere(@NonNull MenuItem it, @NonNull SelectionDetails selection) {
+        Menus.setEnabledAndVisible(it, false);
+    }
+
+    protected void updateBrowse(@NonNull MenuItem it, @NonNull SelectionDetails selection) {
+        Menus.setEnabledAndVisible(it, false);
+    }
+
     protected void updatePasteInto(MenuItem pasteInto, SelectionDetails selectionDetails) {
         Menus.setEnabledAndVisible(pasteInto, false);
     }
@@ -397,25 +437,46 @@ public abstract class MenuManager {
         Menus.setEnabledAndVisible(launcher, false);
     }
 
+    protected void updateExtractAll(MenuItem it) {
+        Menus.setEnabledAndVisible(it, false);
+    }
+
     protected abstract void updateSelectAll(MenuItem selectAll);
+
     protected abstract void updateSelectAll(MenuItem selectAll, SelectionDetails selectionDetails);
+
     protected abstract void updateDeselectAll(
             MenuItem deselectAll, SelectionDetails selectionDetails);
+
     protected abstract void updateCreateDir(MenuItem createDir);
 
     /**
      * Access to meta data about the selection.
      */
     public interface SelectionDetails {
-        boolean containsDirectories();
-
-        boolean containsFiles();
-
+        /** Gets the total number of items (files and directories) in the selection. */
         int size();
 
+        /** Returns whether the selection contains at least a directory. */
+        boolean containsDirectories();
+
+        /** Returns whether the selection contains at least a file. */
+        boolean containsFiles();
+
+        /**
+         * Returns whether the selection contains at least a file that has not been fully downloaded
+         * yet.
+         */
         boolean containsPartialFiles();
 
+        /** Returns whether the selection contains at least a file located in a mounted archive. */
         boolean containsFilesInArchive();
+
+        /**
+         * Returns whether the selection contains exactly one file which is also a supported archive
+         * type.
+         */
+        boolean isArchive();
 
         // TODO: Update these to express characteristics instead of answering concrete questions,
         // since the answer to those questions is (or can be) activity specific.
@@ -427,7 +488,7 @@ public abstract class MenuManager {
 
         boolean canExtract();
 
-        boolean canOpenWith();
+        boolean canOpen();
 
         boolean canViewInOwner();
     }
@@ -453,6 +514,12 @@ public abstract class MenuManager {
 
         public boolean isInRecents() {
             return mActivity.isInRecents();
+        }
+
+        /** Is the current directory showing the contents of an archive? */
+        public boolean isInArchive() {
+            final DocumentInfo dir = mActivity.getCurrentDirectory();
+            return dir != null && ArchivesProvider.AUTHORITY.equals(dir.authority);
         }
 
         public boolean canCreateDirectory() {
