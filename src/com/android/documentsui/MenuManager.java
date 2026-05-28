@@ -83,13 +83,12 @@ public abstract class MenuManager {
         updateMoveToTrash(menu.findItem(getRes(R.id.action_menu_move_to_trash)), selection);
         updateRestoreFromTrash(menu.findItem(getRes(R.id.action_menu_restore_from_trash)),
                 selection);
+        updateAddLauncherShortcut(menu.findItem(getRes(R.id.action_menu_add_shortcut)), selection);
 
         if (isZipNgFlagEnabled()) {
             updateExtractHere(menu.findItem(getRes(R.id.action_menu_extract_here)), selection);
             updateBrowse(menu.findItem(getRes(R.id.action_menu_browse)), selection);
         }
-
-        updateAddLauncherShortcut(menu.findItem(R.id.action_menu_add_shortcut), selection);
 
         Menus.disableHiddenItems(menu);
     }
@@ -116,7 +115,7 @@ public abstract class MenuManager {
         updateSort(mOptionMenu.findItem(getRes(R.id.option_menu_sort)));
         updateLauncher(mOptionMenu.findItem(getRes(R.id.option_menu_launcher)));
         updateShowHiddenFiles(mOptionMenu.findItem(getRes(R.id.option_menu_show_hidden_files)));
-        updateAddLauncherShortcut(mOptionMenu.findItem(R.id.option_menu_add_shortcut));
+        updateAddLauncherShortcut(mOptionMenu.findItem(getRes(R.id.option_menu_add_shortcut)));
 
         if (isUseMaterial3FlagEnabled()) {
             updateModePicker(
@@ -244,7 +243,7 @@ public abstract class MenuManager {
         MenuItem copy = menu.findItem(getRes(R.id.dir_menu_copy_to_clipboard));
         MenuItem delete = menu.findItem(getRes(R.id.dir_menu_delete));
         MenuItem inspect = menu.findItem(getRes(R.id.dir_menu_inspect));
-        MenuItem addLauncherShortcut = menu.findItem(R.id.dir_menu_add_shortcut);
+        MenuItem addLauncherShortcut = menu.findItem(getRes(R.id.dir_menu_add_shortcut));
 
         final boolean canCopy =
                 selectionDetails.size() > 0 && !selectionDetails.containsPartialFiles();
@@ -271,7 +270,7 @@ public abstract class MenuManager {
         MenuItem deselectAll = menu.findItem(getRes(R.id.dir_menu_deselect_all));
         MenuItem createDir = menu.findItem(getRes(R.id.dir_menu_create_dir));
         MenuItem inspect = menu.findItem(getRes(R.id.dir_menu_inspect));
-        MenuItem addLauncherShortcut = menu.findItem(R.id.dir_menu_add_shortcut);
+        MenuItem addLauncherShortcut = menu.findItem(getRes(R.id.dir_menu_add_shortcut));
 
         Menus.setEnabledAndVisible(paste,
                 mDirDetails.hasItemsToPaste() && mDirDetails.canCreateDoc());
