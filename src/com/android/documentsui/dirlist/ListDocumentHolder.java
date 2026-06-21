@@ -18,15 +18,14 @@ package com.android.documentsui.dirlist;
 
 import static com.android.documentsui.DevicePolicyResources.Drawables.Style.SOLID_COLORED;
 import static com.android.documentsui.DevicePolicyResources.Drawables.WORK_PROFILE_ICON;
-import static com.android.documentsui.base.DocumentInfo.getCursorInt;
-import static com.android.documentsui.base.DocumentInfo.getCursorString;
+import static com.android.documentsui.ui.Views.setWeight;
 import static com.android.documentsui.util.FlagUtils.isSingleClickToSelectEnabled;
+import static com.android.documentsui.util.FlagUtils.isUseFileSummaryEnabled;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.app.admin.DevicePolicyManager;
 import android.content.Context;
-import android.database.Cursor;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
@@ -53,7 +52,6 @@ import com.android.documentsui.base.Lookup;
 import com.android.documentsui.base.Shared;
 import com.android.documentsui.base.State;
 import com.android.documentsui.base.UserId;
-import com.android.documentsui.roots.RootCursorWrapper;
 import com.android.documentsui.ui.Views;
 import com.android.modules.utils.build.SdkLevel;
 
@@ -65,16 +63,23 @@ final class ListDocumentHolder extends DocumentHolder {
     private static final String TAG = "ListDocumentHolder";
 
     private final TextView mTitle;
+
+    /** Wrapper for the title column which contains title, icon, etc. */
+    private final @Nullable View mTitleContainer;
+
     private final @Nullable TextView mDate; // Non-null for tablets/sw720dp, null for other devices.
     private final @Nullable TextView mSize; // Non-null for tablets/sw720dp, null for other devices.
     private final @Nullable TextView mType; // Non-null for tablets/sw720dp, null for other devices.
+
+    // Summary is only displayed for Material3.
+    private final @Nullable TextView mSummary;
     // Container for date + size + summary, null only for tablets/sw720dp
     private final @Nullable LinearLayout mDetails;
     // TextView for date + size + summary, null only for tablets/sw720dp
     private final @Nullable TextView mMetadataView;
     private final ImageView mIconMime;
     private final ImageView mIconThumb;
-    private final ImageView mIconCheck;
+    private final @Nullable ImageView mIconCheck;
     private final ImageView mIconBadge;
     private final View mIconLayout;
     final View mPreviewIcon;
@@ -82,18 +87,35 @@ final class ListDocumentHolder extends DocumentHolder {
     private final IconHelper mIconHelper;
     private final Lookup<String, String> mFileTypeLookup;
     // This is used in as a convenience in our bind method.
-    private final DocumentInfo mDoc;
+    private DocumentInfo mDoc;
+    private final DocumentsAdapter.Environment mEnv;
 
-    public ListDocumentHolder(Context context, ViewGroup parent, IconHelper iconHelper,
-            Lookup<String, String> fileTypeLookup, ConfigStore configStore) {
+    ListDocumentHolder(
+            Context context,
+            ViewGroup parent,
+            IconHelper iconHelper,
+            Lookup<String, String> fileTypeLookup,
+            ConfigStore configStore,
+            DocumentsAdapter.Environment environment) {
         super(context, parent, getRes(R.layout.item_doc_list), configStore);
 
+        boolean showSelectionCheckmark =
+                !isSingleClickToSelectEnabled()
+                        || itemView.getResources().getBoolean(R.bool.show_selection_checkmark);
+
+        mEnv = environment;
         mIconLayout = itemView.findViewById(getRes(R.id.icon));
         mIconMime = (ImageView) itemView.findViewById(getRes(R.id.icon_mime));
         mIconThumb = (ImageView) itemView.findViewById(getRes(R.id.icon_thumb));
-        mIconCheck = (ImageView) itemView.findViewById(getRes(R.id.icon_check));
+        mIconCheck =
+                (ImageView)
+                        conditionalView(
+                                showSelectionCheckmark,
+                                itemView.findViewById(getRes(R.id.icon_check)));
         mIconBadge = (ImageView) itemView.findViewById(getRes(R.id.icon_profile_badge));
         mTitle = (TextView) itemView.findViewById(android.R.id.title);
+        mTitleContainer = (View) itemView.findViewById(R.id.title_container);
+        mSummary = (TextView) itemView.findViewById(getRes(R.id.file_summary));
         mSize = (TextView) itemView.findViewById(getRes(R.id.size));
         mDate = (TextView) itemView.findViewById(getRes(R.id.date));
         mType = (TextView) itemView.findViewById(getRes(R.id.file_type));
@@ -105,6 +127,11 @@ final class ListDocumentHolder extends DocumentHolder {
         mIconHelper = iconHelper;
         mFileTypeLookup = fileTypeLookup;
         mDoc = new DocumentInfo();
+
+        if (!showSelectionCheckmark) {
+            // Override android:pointerIcon="hand" in the res/**/*.xml layout.
+            mIconLayout.setPointerIcon(null);
+        }
 
         if (SdkLevel.isAtLeastT() && !mConfigStore.isPrivateSpaceInDocsUIEnabled()) {
             setUpdatableWorkProfileIcon(context);
@@ -125,11 +152,15 @@ final class ListDocumentHolder extends DocumentHolder {
 
     @Override
     public void setSelected(boolean selected, boolean animate) {
+        boolean showSelectionCheckmark = mIconCheck != null;
+
         // We always want to make sure our check box disappears if we're not selected,
         // even if the item is disabled. But it should be an error (see assert below)
         // to be set to selected && be disabled.
         float checkAlpha = selected ? 1f : 0f;
-        if (animate) {
+        if (!showSelectionCheckmark) {
+            // No-op.
+        } else if (animate) {
             fade(mIconCheck, checkAlpha).start();
         } else {
             mIconCheck.setAlpha(checkAlpha);
@@ -141,7 +172,9 @@ final class ListDocumentHolder extends DocumentHolder {
 
         super.setSelected(selected, animate);
 
-        if (animate) {
+        if (!showSelectionCheckmark) {
+            // No-op.
+        } else if (animate) {
             fade(mIconMime, 1f - checkAlpha).start();
             fade(mIconThumb, 1f - checkAlpha).start();
         } else {
@@ -162,22 +195,25 @@ final class ListDocumentHolder extends DocumentHolder {
             mIconMime.setAlpha(imgAlpha);
             mIconThumb.setAlpha(imgAlpha);
         }
+
+        if (!enabled) {
+            // Hide the sync state when the user can't do anything to fix it.
+            hideSyncIcons();
+        }
     }
 
     @Override
     public void bindPreviewIcon(boolean show, Function<View, Boolean> clickCallback) {
-        if (mDoc.isDirectory()) {
+        if (mDoc.isDirectory() || !show) {
             mPreviewIcon.setVisibility(View.GONE);
         } else {
-            mPreviewIcon.setVisibility(show ? View.VISIBLE : View.GONE);
-            if (show) {
-                mPreviewIcon.setContentDescription(
-                        getPreviewIconContentDescription(
-                                mIconHelper.shouldShowBadge(mDoc.userId.getIdentifier()),
-                                mDoc.displayName, mDoc.userId));
-                mPreviewIcon.setAccessibilityDelegate(
-                        new PreviewAccessibilityDelegate(clickCallback));
-            }
+            mPreviewIcon.setVisibility(View.VISIBLE);
+            mPreviewIcon.setContentDescription(
+                    getPreviewIconContentDescription(
+                            mIconHelper.shouldShowBadge(mDoc.userId.getIdentifier()),
+                            mDoc.displayName,
+                            mDoc.userId));
+            mPreviewIcon.setAccessibilityDelegate(new PreviewAccessibilityDelegate(clickCallback));
         }
     }
 
@@ -224,10 +260,13 @@ final class ListDocumentHolder extends DocumentHolder {
 
     @Override
     public int classifySelectionHotspot(MotionEvent event) {
+        boolean showSelectionCheckmark = mIconCheck != null;
+
         if (mDoc.isDirectory() && (mAction != State.ACTION_BROWSE)) {
             // No-op.
 
-        } else if (Views.isEventOver(event, itemView.getParent(), mIconLayout)) {
+        } else if (showSelectionCheckmark
+                && Views.isEventOver(event, itemView.getParent(), mIconLayout)) {
             return ItemDetails.SELECTION_HOTSPOT_INSIDE_TOGGLE_MULTI;
 
         } else if (Events.isMousyEvent(event) && isSingleClickToSelectEnabled()) {
@@ -243,20 +282,67 @@ final class ListDocumentHolder extends DocumentHolder {
     }
 
     /**
+     * If summary column needs to be displayed or hidden, adjust the width of all columns. *
+     *
+     * <p>NOTE: These values are matched in {@link
+     * com.android.documentsui.sorting.TableHeaderController#adjustColumnWidthForSummary()}
+     */
+    private void adjustColumnWidthForSummary() {
+        if (isUseFileSummaryEnabled()) {
+            setWeight(mTitleContainer, 0.35f);
+            if (mSummary != null) {
+                setWeight(mSummary, 0.25f);
+            }
+            setWeight(mDate, 0.15f);
+            setWeight(mSize, 0.15f);
+            setWeight(mType, 0.15f);
+        } else {
+            setWeight(mTitleContainer, 0.4f);
+            if (mSummary != null) {
+                setWeight(mSummary, 0f);
+            }
+            setWeight(mDate, 0.2f);
+            setWeight(mSize, 0.2f);
+            setWeight(mType, 0.2f);
+        }
+    }
+
+    private void bindSummary(@Nullable String summary) {
+        if (mSummary == null) {
+            return;
+        }
+
+        if (useSummary()) {
+            if (TextUtils.isEmpty(summary)) {
+                mSummary.setText("—");
+                mSummary.setTooltipText(null);
+                mSummary.setCompoundDrawables(null, null, null, null);
+            } else {
+                mSummary.setText(summary, TextView.BufferType.SPANNABLE);
+                mSummary.setTooltipText(summary);
+                mSummary.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_summary, 0, 0, 0);
+            }
+            mSummary.setVisibility(View.VISIBLE);
+        } else {
+            mSummary.setVisibility(View.GONE);
+        }
+    }
+
+    private boolean useSummary() {
+        return mEnv.shouldDisplaySummary();
+    }
+
+    /**
      * Bind this view to the given document for display.
      *
-     * @param cursor  Pointing to the item to be bound.
+     * @param doc The document to be bound.
      * @param modelId The model ID of the item.
      */
     @Override
-    public void bind(Cursor cursor, String modelId) {
-        assert (cursor != null);
-
+    public void bind(
+            DocumentInfo doc, String modelId, @Nullable String summary, boolean justFinishedSync) {
         mModelId = modelId;
-
-        mDoc.updateFromCursor(cursor,
-                UserId.of(getCursorInt(cursor, RootCursorWrapper.COLUMN_USER_ID)),
-                getCursorString(cursor, RootCursorWrapper.COLUMN_AUTHORITY));
+        mDoc = doc;
 
         mIconHelper.stopLoading(mIconThumb);
 
@@ -274,50 +360,96 @@ final class ListDocumentHolder extends DocumentHolder {
         } else {
             mTitle.setText(mDoc.displayName, TextView.BufferType.SPANNABLE);
         }
+
+        adjustColumnWidthForSummary();
+        bindSummary(summary);
+
         mTitle.setVisibility(View.VISIBLE);
 
-        if (mDoc.isDirectory()) {
+        bindSyncIcons(mDoc, justFinishedSync);
+
+        if (mDoc.isDirectory() && !isUseMaterial3FlagEnabled()) {
             // Note, we don't show any details for any directory...ever.
             if (mDetails != null) {
                 // Non-tablets
                 mDetails.setVisibility(View.GONE);
             }
         } else {
-            // For tablets metadata is provided in columns mDate, mSize, mType.
-            // For other devices mMetadataView consolidates the metadata info.
             if (mMetadataView != null) {
-                // Non-tablets
+                // In narrow list view, mMetadataView consolidates the metadata info.
                 boolean hasDetails = false;
-                ArrayList<String> metadataList = new ArrayList<>();
-                if (mDoc.lastModified > 0) {
-                    hasDetails = true;
-                    metadataList.add(Shared.formatTime(mContext, mDoc.lastModified));
+
+                if (!mDoc.isDirectory()) {
+                    ArrayList<String> metadataList = new ArrayList<>(4);
+
+                    if (useSummary() && !TextUtils.isEmpty(summary)) {
+                        metadataList.add(summary);
+                        mMetadataView.setCompoundDrawablesWithIntrinsicBounds(
+                                R.drawable.ic_summary, 0, 0, 0);
+                        mMetadataView.setTooltipText(summary);
+                    } else {
+                        mMetadataView.setCompoundDrawables(null, null, null, null);
+                        mMetadataView.setTooltipText(null);
+                    }
+
+                    if (isUseMaterial3FlagEnabled()) {
+                        if (mDoc.size >= 0) {
+                            metadataList.add(Formatter.formatFileSize(mContext, mDoc.size));
+                        }
+
+                        if (mDoc.lastModified > 0) {
+                            metadataList.add(Shared.formatTime(mContext, mDoc.lastModified));
+                        }
+
+                        hasDetails = !metadataList.isEmpty();
+                        mMetadataView.setText(TextUtils.join(" • ", metadataList));
+                    } else {
+                        if (mDoc.lastModified > 0) {
+                            metadataList.add(Shared.formatTime(mContext, mDoc.lastModified));
+                        }
+
+                        if (mDoc.size >= 0) {
+                            metadataList.add(Formatter.formatFileSize(mContext, mDoc.size));
+                        }
+
+                        hasDetails = !metadataList.isEmpty();
+                        metadataList.add(mFileTypeLookup.lookup(mDoc.mimeType));
+
+                        mMetadataView.setText(TextUtils.join(", ", metadataList));
+                    }
                 }
-                if (mDoc.size > -1) {
-                    hasDetails = true;
-                    metadataList.add(Formatter.formatFileSize(mContext, mDoc.size));
-                }
-                metadataList.add(mFileTypeLookup.lookup(mDoc.mimeType));
-                mMetadataView.setText(TextUtils.join(", ", metadataList));
+
                 if (mDetails != null) {
                     mDetails.setVisibility(hasDetails ? View.VISIBLE : View.GONE);
                 } else {
                     Log.w(TAG, "mDetails is unexpectedly null for non-tablet devices!");
                 }
             } else {
-                // Tablets
+                // In wide list view, metadata is provided in columns mDate, mSize, mType.
+                assert mDate != null;
+                assert mSize != null;
+                assert mType != null;
+
                 if (mDoc.lastModified > 0) {
                     mDate.setVisibility(View.VISIBLE);
                     mDate.setText(Shared.formatTime(mContext, mDoc.lastModified));
+                } else if (isUseMaterial3FlagEnabled()) {
+                    mDate.setVisibility(View.VISIBLE);
+                    mDate.setText("—");
                 } else {
                     mDate.setVisibility(View.INVISIBLE);
                 }
-                if (mDoc.size > -1) {
+
+                if (!mDoc.isDirectory() && mDoc.size >= 0) {
                     mSize.setVisibility(View.VISIBLE);
                     mSize.setText(Formatter.formatFileSize(mContext, mDoc.size));
+                } else if (isUseMaterial3FlagEnabled()) {
+                    mSize.setVisibility(View.VISIBLE);
+                    mSize.setText("—");
                 } else {
                     mSize.setVisibility(View.INVISIBLE);
                 }
+
                 mType.setText(mFileTypeLookup.lookup(mDoc.mimeType));
             }
         }

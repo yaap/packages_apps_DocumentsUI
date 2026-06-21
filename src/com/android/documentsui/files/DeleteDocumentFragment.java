@@ -16,21 +16,19 @@
 package com.android.documentsui.files;
 
 import static com.android.documentsui.base.SharedMinimal.TAG;
-import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.app.Dialog;
 import android.content.Context;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.LayoutInflater;
 import android.widget.Button;
-import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
-import androidx.fragment.app.DialogFragment;
 import androidx.fragment.app.FragmentManager;
 
+import com.android.documentsui.BaseActivity;
+import com.android.documentsui.DocumentsUIDialogFragment;
 import com.android.documentsui.Injector;
 import com.android.documentsui.R;
 import com.android.documentsui.base.DocumentInfo;
@@ -41,14 +39,17 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Dialog to delete file or directory.
- */
-public class DeleteDocumentFragment extends DialogFragment {
+import javax.annotation.Nullable;
+
+/** Dialog to delete file or directory. */
+public class DeleteDocumentFragment extends DocumentsUIDialogFragment {
     private static final String TAG_DELETE_DOCUMENT = "delete_document";
+
+    private static final String EXTRA_IN_TRASH = "in_trash";
 
     private List<DocumentInfo> mDocuments;
     private DocumentInfo mSrcParent;
+    private boolean mInTrash;
 
     /**
      * Show the dialog UI.
@@ -57,7 +58,11 @@ public class DeleteDocumentFragment extends DialogFragment {
      * @param docs the selected documents
      * @param srcParent the parent document of the selection
      */
-    public static void show(FragmentManager fm, List<DocumentInfo> docs, DocumentInfo srcParent) {
+    public static void show(
+            FragmentManager fm,
+            List<DocumentInfo> docs,
+            @Nullable DocumentInfo srcParent,
+            boolean inTrash) {
         if (fm.isStateSaved()) {
             Log.w(TAG, "Skip show delete dialog because state saved");
             return;
@@ -66,6 +71,7 @@ public class DeleteDocumentFragment extends DialogFragment {
         final DeleteDocumentFragment dialog = new DeleteDocumentFragment();
         dialog.mDocuments = docs;
         dialog.mSrcParent = srcParent;
+        dialog.mInTrash = inTrash;
         dialog.show(fm, TAG_DELETE_DOCUMENT);
     }
 
@@ -80,25 +86,26 @@ public class DeleteDocumentFragment extends DialogFragment {
         if (savedInstanceState != null) {
             mSrcParent = savedInstanceState.getParcelable(Shared.EXTRA_DOC);
             mDocuments = savedInstanceState.getParcelableArrayList(Shared.EXTRA_SELECTION);
+            mInTrash = savedInstanceState.getBoolean(EXTRA_IN_TRASH);
         }
 
         Context context = getActivity();
-        Injector<?> injector = ((FilesActivity) getActivity()).getInjector();
-        LayoutInflater dialogInflater = LayoutInflater.from(context);
-        TextView message =
-                (TextView)
-                        dialogInflater.inflate(
-                                getRes(R.layout.dialog_delete_confirmation), null, false);
-        message.setText(injector.messages.generateDeleteMessage(mDocuments));
+        Injector<?> injector = ((BaseActivity) getActivity()).getInjector();
 
-        final AlertDialog alertDialog = new MaterialAlertDialogBuilder(context)
-                .setView(message)
-                .setPositiveButton(
-                        android.R.string.ok,
-                        (dialog, id) ->
-                            injector.actions.deleteSelectedDocuments(mDocuments, mSrcParent))
-                .setNegativeButton(android.R.string.cancel, null)
-                .create();
+        String title = getString(R.string.delete_forever_dialog_title);
+        String message = injector.messages.generateDeleteMessage(mDocuments, mInTrash);
+
+        final AlertDialog alertDialog =
+                new MaterialAlertDialogBuilder(context)
+                        .setTitle(title)
+                        .setMessage(message)
+                        .setPositiveButton(
+                                android.R.string.ok,
+                                (dialog, id) ->
+                                        injector.actions.deleteSelectedDocuments(
+                                                mDocuments, mSrcParent))
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .create();
 
         alertDialog.setOnShowListener(
                 (dialogInterface) -> {
@@ -114,5 +121,6 @@ public class DeleteDocumentFragment extends DialogFragment {
         super.onSaveInstanceState(outState);
         outState.putParcelable(Shared.EXTRA_DOC, mSrcParent);
         outState.putParcelableArrayList(Shared.EXTRA_SELECTION, (ArrayList) mDocuments);
+        outState.putBoolean(EXTRA_IN_TRASH, mInTrash);
     }
 }

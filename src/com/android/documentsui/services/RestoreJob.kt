@@ -86,7 +86,7 @@ class RestoreJob(
 
     override fun getFailureNotification(): Notification {
         return getFailureNotification(
-            getFailureContentTitle(R.string.restore_from_trash_error_notification_title),
+            getFailureContentTitle(R.string.restore_error_2),
             R.drawable.ic_menu_restore_from_trash,
         )
     }
@@ -96,8 +96,12 @@ class RestoreJob(
             id,
             operationType,
             state,
-            getProgressMessage(R.string.restore_in_progress),
+            filename,
+            mResourceUris.itemCount,
             hasFailures(),
+            failedDocs,
+            failedUris,
+            failedPaths,
         )
     }
 
@@ -148,11 +152,14 @@ class RestoreJob(
      * @throws ResourceException if the document fails to restore.
      */
     fun restoreDocument(doc: DocumentInfo) {
+        // If the current view is the trash root, the destination is null, and the document is
+        // restored to its original parent.
+        val destinationUri = if (stack?.isTrashRoot() == true) null else stack?.peek()?.derivedUri
         try {
             DocumentsContract.restoreDocumentFromTrash(
                 ContentResolver.wrap(getClient(doc)),
                 doc.derivedUri,
-                null,
+                destinationUri,
             )
         } catch (e: java.lang.Exception) {
             if (e is DeadObjectException) {

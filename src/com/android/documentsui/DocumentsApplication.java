@@ -29,6 +29,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.om.OverlayManager;
+import android.content.pm.PackageItemInfo;
 import android.net.Uri;
 import android.os.RemoteException;
 import android.os.UserHandle;
@@ -59,6 +60,7 @@ import javax.annotation.concurrent.GuardedBy;
 public class DocumentsApplication extends Application {
     private static final String TAG = "DocumentsApplication";
     private static final long PROVIDER_ANR_TIMEOUT = 20 * DateUtils.SECOND_IN_MILLIS;
+    private static final long PROVIDER_ANR_CANCEL_TIMEOUT = 3 * DateUtils.SECOND_IN_MILLIS;
 
     private static final List<String> PACKAGE_FILTER_ACTIONS = Lists.newArrayList(
             Intent.ACTION_PACKAGE_ADDED,
@@ -103,7 +105,12 @@ public class DocumentsApplication extends Application {
         if (client == null) {
             throw new RemoteException("Failed to acquire provider for " + authority);
         }
-        client.setDetectNotResponding(PROVIDER_ANR_TIMEOUT);
+        if (FlagUtils.isContentProviderClientAnrOnCancelEnabled()) {
+            client.setDetectNotRespondingOnCancel(
+                    PROVIDER_ANR_TIMEOUT, PROVIDER_ANR_CANCEL_TIMEOUT);
+        } else {
+            client.setDetectNotResponding(PROVIDER_ANR_TIMEOUT);
+        }
         return client;
     }
 
@@ -196,6 +203,10 @@ public class DocumentsApplication extends Application {
             }
         }
 
+        // Force all the loadLabel() invocations to sanitize the package labels when loading them
+        // instead of sanitizing at every callsite.
+        PackageItemInfo.forceSafeLabels();
+
         final ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
         final OverlayManager om = getSystemService(OverlayManager.class);
         final int memoryClassBytes = am.getMemoryClass() * 1024 * 1024;
@@ -225,7 +236,7 @@ public class DocumentsApplication extends Application {
                 getSharedPreferences(ClipStorage.PREF_NAME, 0));
         mClipper = DocumentClipper.create(this, mClipStore);
 
-        mDragAndDropManager = DragAndDropManager.create(this, mClipper);
+        mDragAndDropManager = DragAndDropManager.create(this, mClipper, mProviders);
 
         mFileTypeLookup = new FileTypeMap(this);
 

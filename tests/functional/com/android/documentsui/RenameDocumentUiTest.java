@@ -19,10 +19,14 @@ package com.android.documentsui;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import android.platform.test.annotations.EnableFlags;
+
 import androidx.test.filters.LargeTest;
 import androidx.test.uiautomator.UiObjectNotFoundException;
 
 import com.android.documentsui.files.FilesActivity;
+import com.android.documentsui.flags.Flags;
+import com.android.documentsui.rules.OverrideFlagsRule;
 import com.android.documentsui.rules.TestFilesRule;
 import com.android.documentsui.util.VersionUtils;
 
@@ -37,6 +41,8 @@ public class RenameDocumentUiTest extends ActivityTestJunit4<FilesActivity> {
 
     @Rule
     public final TestFilesRule mTestFilesRule = new TestFilesRule();
+
+    @Rule public final OverrideFlagsRule mOverrideFlagsRule = new OverrideFlagsRule();
 
     @Before
     public void setUpTest() {
@@ -156,6 +162,37 @@ public class RenameDocumentUiTest extends ActivityTestJunit4<FilesActivity> {
     }
 
     @Test
+    public void testRenameFile_TrimTrailingSpaces() throws Exception {
+        String inputNameText = " " + newName + " ";
+        bots.directory.selectDocument(TestFilesRule.FILE_NAME_1, 1);
+
+        clickRename();
+
+        device.waitForIdle();
+        bots.main.setDialogText(inputNameText);
+
+        device.waitForIdle();
+        bots.main.clickDialogOkButton(/* closeSoftKeyboard */ true);
+
+        // Ensure that only the end of the filename gets trimmed
+        bots.directory.waitForDocument(" " + newName);
+        bots.directory.assertDocumentsAbsent(TestFilesRule.FILE_NAME_1);
+        bots.directory.assertDocumentsCount(4);
+    }
+
+    @Test
+    public void testRenameFile_ToExistingFileAndTrimTrailingSpaces() throws Exception {
+        String nameWithSpace = TestFilesRule.FILE_NAME_2 + " ";
+
+        renameWithConflict(nameWithSpace);
+        bots.main.clickDialogCancelButton(/* closeSoftKeyboard */ true);
+
+        bots.directory.assertDocumentsVisible(TestFilesRule.FILE_NAME_1);
+        bots.directory.assertDocumentsVisible(TestFilesRule.FILE_NAME_2);
+        bots.directory.assertDocumentsCount(4);
+    }
+
+    @Test
     public void testRenameDir() throws Exception {
         String oldName = "Dir1";
         String newName = "Dir123";
@@ -173,8 +210,56 @@ public class RenameDocumentUiTest extends ActivityTestJunit4<FilesActivity> {
     }
 
     @Test
+    public void testRename_EmptyFileName() throws Exception {
+        String emptyName = "";
+        bots.directory.selectDocument(TestFilesRule.FILE_NAME_1, 1);
+
+        clickRename();
+        bots.main.setDialogText(emptyName);
+        bots.keyboard.pressEnter();
+        assertTrue(bots.main.findRenameErrorMessage(R.string.missing_rename_error).exists());
+
+        bots.main.clickDialogCancelButton(/* closeSoftKeyboard */ true);
+        bots.directory.assertDocumentsVisible(TestFilesRule.FILE_NAME_1);
+        bots.directory.assertDocumentsCount(4);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_USE_MATERIAL3)
+    public void testRename_CreateHiddenFile() throws Exception {
+        bots.directory.selectDocument(TestFilesRule.FILE_NAME_1, 1);
+
+        clickRename();
+        bots.main.setDialogText(TestFilesRule.HIDDEN_FILE_NAME);
+        assertTrue(bots.main.findRenameErrorMessage(R.string.hidden_file_rename_warning).exists());
+        bots.keyboard.pressEnter();
+        bots.directory.assertDocumentsAbsent(TestFilesRule.HIDDEN_FILE_NAME);
+        bots.directory.assertDocumentsCount(3);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_USE_MATERIAL3)
+    public void testRename_ContainsInvalidCharacters() throws Exception {
+        bots.directory.selectDocument(TestFilesRule.FILE_NAME_1, 1);
+
+        clickRename();
+        bots.main.setDialogText(TestFilesRule.INVALID_FILE_NAME);
+        assertTrue(
+                bots.main
+                        .findUiObjectWithResIdAndSuffix(R.string.rename_invalid_character, "/")
+                        .exists());
+        bots.keyboard.pressEnter();
+        assertTrue(
+                bots.main
+                        .findUiObjectWithResIdAndSuffix(R.string.rename_invalid_character, "/")
+                        .exists());
+        bots.main.clickDialogCancelButton(/* closeSoftKeyboard */ true);
+        bots.directory.assertDocumentsCount(4);
+    }
+
+    @Test
     public void testRename_NameExists() throws Exception {
-        renameWithConflict();
+        renameWithConflict(TestFilesRule.FILE_NAME_2);
 
         bots.main.clickDialogCancelButton(/* closeSoftKeyboard */ true);
 
@@ -185,7 +270,7 @@ public class RenameDocumentUiTest extends ActivityTestJunit4<FilesActivity> {
 
     @Test
     public void testRename_RecoverAfterConflict() throws Exception {
-        renameWithConflict();
+        renameWithConflict(TestFilesRule.FILE_NAME_2);
         device.waitForIdle();
 
         bots.main.setDialogText(newName);
@@ -198,7 +283,7 @@ public class RenameDocumentUiTest extends ActivityTestJunit4<FilesActivity> {
         bots.directory.assertDocumentsCount(4);
     }
 
-    private void renameWithConflict() throws Exception {
+    private void renameWithConflict(String newName) throws Exception {
         // Check that document with the new name exists
         bots.directory.assertDocumentsVisible(TestFilesRule.FILE_NAME_2);
         bots.directory.selectDocument(TestFilesRule.FILE_NAME_1, 1);
@@ -206,10 +291,10 @@ public class RenameDocumentUiTest extends ActivityTestJunit4<FilesActivity> {
         clickRename();
 
         bots.main.assertDialogText(TestFilesRule.FILE_NAME_1);
-        assertFalse(bots.main.findRenameErrorMessage().exists());
-        bots.main.setDialogText(TestFilesRule.FILE_NAME_2);
+        assertFalse(bots.main.findRenameErrorMessage(R.string.name_conflict).exists());
+        bots.main.setDialogText(newName);
         bots.keyboard.pressEnter();
-        assertTrue(bots.main.findRenameErrorMessage().exists());
+        assertTrue(bots.main.findRenameErrorMessage(R.string.name_conflict).exists());
     }
 
     private void clickRename() throws UiObjectNotFoundException {

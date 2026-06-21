@@ -18,13 +18,15 @@ package com.android.documentsui.dirlist;
 
 import static org.junit.Assert.assertTrue;
 
+import android.view.ViewGroup;
+
 import androidx.recyclerview.selection.SelectionTracker;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.recyclerview.widget.RecyclerView.AdapterDataObserver;
-import android.view.ViewGroup;
 
 import com.android.documentsui.Model.Update;
 import com.android.documentsui.base.EventListener;
+import com.android.documentsui.base.NetworkMonitor;
 import com.android.documentsui.testing.TestEventListener;
 
 import java.util.ArrayList;
@@ -38,6 +40,7 @@ public class TestDocumentsAdapter extends DocumentsAdapter {
     final TestEventListener<Update> mModelListener = new TestEventListener<>();
     List<String> mModelIds = new ArrayList<>();
     private final AdapterDataObserver mAdapterObserver;
+    private final NetworkMonitor.NetworkListener mNetworkListener = isOnline -> {};
     private final List<Integer> mSelectionChanged = new ArrayList<>();
 
     public TestDocumentsAdapter(List<String> modelIds) {
@@ -87,6 +90,16 @@ public class TestDocumentsAdapter extends DocumentsAdapter {
     @Override
     EventListener<Update> getModelUpdateListener() {
         return mModelListener;
+    }
+
+    @Override
+    NetworkMonitor.NetworkListener getNetworkListener() {
+        return mNetworkListener;
+    }
+
+    @Override
+    public void onSummariesUpdated(List<Integer> updatedIndices) {
+        // No-op for the test double, can be overridden if needed.
     }
 
     @Override

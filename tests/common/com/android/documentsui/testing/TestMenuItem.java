@@ -19,6 +19,8 @@ package com.android.documentsui.testing;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import android.content.Intent;
+import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 
@@ -39,11 +41,22 @@ public abstract class TestMenuItem implements MenuItem {
     boolean visible;
     View actionView;
     @StringRes int title;
+    CharSequence titleCharSequence;
+    Intent mIntent;
+    int groupId;
+    int itemId;
+    int showAsAction;
 
     public static TestMenuItem create(int id) {
+        return create(Menu.NONE, id);
+    }
+
+    public static TestMenuItem create(int groupId, int id) {
         final TestMenuItem mockMenuItem = Mockito.mock(TestMenuItem.class,
                 Mockito.withSettings().defaultAnswer(Mockito.CALLS_REAL_METHODS));
 
+        mockMenuItem.groupId = groupId;
+        mockMenuItem.itemId = id;
         // By default all menu items are enabled and visible.
         mockMenuItem.enabled = true;
         mockMenuItem.visible = true;
@@ -58,8 +71,14 @@ public abstract class TestMenuItem implements MenuItem {
     }
 
     @Override
-    public TestMenuItem setTitle(@StringRes CharSequence title) {
+    public TestMenuItem setTitle(CharSequence title) {
+        this.titleCharSequence = title;
         return this;
+    }
+
+    @Override
+    public CharSequence getTitle() {
+        return this.titleCharSequence;
     }
 
     @Override
@@ -95,17 +114,53 @@ public abstract class TestMenuItem implements MenuItem {
         return this.actionView;
     }
 
+    @Override
+    public MenuItem setIntent(Intent intent) {
+        mIntent = intent;
+        return this;
+    }
+
+    @Override
+    public Intent getIntent() {
+        return mIntent;
+    }
+
+    @Override
+    public int getItemId() {
+        return itemId;
+    }
+
+    @Override
+    public int getGroupId() {
+        return groupId;
+    }
+
     public void assertEnabledAndVisible() {
-        assertTrue(this.enabled);
-        assertTrue(this.visible);
+        assertTrue(this.title + " should be enabled", this.enabled);
+        assertTrue(this.title + " should be visible", this.visible);
     }
 
     public void assertDisabledAndInvisible() {
-        assertFalse(this.enabled);
-        assertFalse(this.visible);
+        assertFalse(this.title + " should be disabled", this.enabled);
+        assertFalse(this.title + " should be invisible", this.visible);
+    }
+
+    /** Asserts that the menu item is disabled but visible. */
+    public void assertDisabledAndVisible() {
+        assertFalse(this.title + " should be disabled", this.enabled);
+        assertTrue(this.title + " should be visible", this.visible);
     }
 
     public void assertTitle(@StringRes int title) {
         assertTrue(this.title == title);
+    }
+
+    @Override
+    public void setShowAsAction(int actionEnum) {
+        this.showAsAction = actionEnum;
+    }
+
+    public int getShowAsAction() {
+        return this.showAsAction;
     }
 }

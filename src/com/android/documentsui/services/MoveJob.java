@@ -21,6 +21,7 @@ import static android.content.ContentResolver.wrap;
 import static com.android.documentsui.base.SharedMinimal.DEBUG;
 import static com.android.documentsui.base.SharedMinimal.redact;
 import static com.android.documentsui.services.FileOperationService.OPERATION_MOVE;
+import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.app.Notification;
@@ -32,7 +33,6 @@ import android.os.Messenger;
 import android.os.RemoteException;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
-import android.text.BidiFormatter;
 import android.util.Log;
 
 import com.android.documentsui.MetricConsts;
@@ -45,8 +45,6 @@ import com.android.documentsui.base.UserId;
 import com.android.documentsui.clipping.UrisSupplier;
 
 import java.io.FileNotFoundException;
-import java.util.HashMap;
-import java.util.Map;
 
 import javax.annotation.Nullable;
 
@@ -90,15 +88,12 @@ final class MoveJob extends CopyJob {
     @Override
     public Notification getFailureNotification() {
         return getFailureNotification(
-                getFailureContentTitle(getRes(R.string.move_error_notification_title)),
+                getFailureContentTitle(
+                        getRes(
+                                isUseMaterial3FlagEnabled()
+                                        ? R.string.move_error_2
+                                        : R.string.move_error_notification_title)),
                 getRes(R.drawable.ic_menu_copy));
-    }
-
-    @Override
-    protected String getProgressMessage() {
-        Map<String, Object> formatArgs = new HashMap<>();
-        formatArgs.put("directory", BidiFormatter.getInstance().unicodeWrap(stack.getTitle()));
-        return getProgressMessage(R.string.move_in_progress, formatArgs);
     }
 
     @Override

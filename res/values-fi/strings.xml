@@ -17,11 +17,18 @@
 <resources xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
     <string name="missing_rename_error" msgid="9098952207447981103">"Nimeä tämä uudelleen"</string>
+    <string name="hidden_file_rename_warning" msgid="5427365657393208836">"Tiedostot, joissa on . nimen alussa, on piilotettu"</string>
+    <string name="rename_invalid_character" msgid="5795828095376129943">"Virheellinen merkki: "</string>
     <string name="add_folder_name_error" msgid="6014615052491406810">"Lisää kansion nimi"</string>
     <string name="files_label" msgid="771781190045103748">"Tiedostot"</string>
     <string name="downloads_label" msgid="5462789470049501103">"Lataukset"</string>
     <!-- no translation found for app_label (8089292432455111409) -->
     <skip />
+    <string name="summary_consent_title" msgid="649526095415341516"></string>
+    <string name="summary_consent_message" msgid="5608129539202973666"></string>
+    <string name="summary_consent_ok_button" msgid="7813177426978382632">"Laita päälle"</string>
+    <string name="summary_consent_cancel_button" msgid="2971058893677958570">"Älä kysy uudelleen"</string>
+    <string name="summary_consent_remind_later_button" msgid="1499532238918418225">"Ei nyt"</string>
     <!-- no translation found for launcher_label (799410258349837668) -->
     <skip />
     <string name="title_open" msgid="3165686459158020921">"Avaa sijainnista"</string>
@@ -31,13 +38,14 @@
     <string name="menu_list" msgid="6714267452146410402">"Luettelonäkymä"</string>
     <string name="menu_search" msgid="1876699106790719849">"Haku"</string>
     <string name="menu_settings" msgid="6520844520117939047">"Tallennusasetukset"</string>
+    <string name="manage_device" msgid="329180710072251010">"Muuta laitteen asetuksia"</string>
     <string name="menu_open" msgid="9092138100049759315">"Avaa"</string>
     <string name="menu_open_with" msgid="5507647065467520229">"Avaa sovelluksessa"</string>
     <string name="menu_open_in_new_window" msgid="6686563636123311276">"Avaa uudessa ikkunassa"</string>
     <string name="menu_save" msgid="5195367497138965168">"Tallenna"</string>
     <string name="menu_share" msgid="4307140947108068356">"Jaa"</string>
     <string name="menu_delete" msgid="1022254131543256626">"Poista"</string>
-    <string name="menu_permanently_delete" msgid="1177349666644056627">"Poista pysyvästi"</string>
+    <string name="menu_permanently_delete" msgid="7144967435018939304">"Poista pysyvästi"</string>
     <string name="menu_move_to_trash" msgid="1809017212900920775">"Siirrä roskakoriin"</string>
     <string name="menu_restore_from_trash" msgid="6335501796145576127">"Palauta"</string>
     <string name="menu_select_all" msgid="7600576812185570403">"Valitse kaikki"</string>
@@ -56,6 +64,9 @@
     <string name="menu_inspect" msgid="7279855349299446224">"Näytä tiedot"</string>
     <string name="menu_show_hidden_files" msgid="5140676344684492769">"Näytä piilotetut tiedostot"</string>
     <string name="menu_hide_hidden_files" msgid="5654495713350153702">"Älä näytä piilotettuja"</string>
+    <string name="menu_refresh" msgid="1724946627254685997">"Päivitä"</string>
+    <string name="option_show_summary_column" msgid="1008012395393952119">"Näytä kuvaussarake"</string>
+    <string name="option_hide_summary_column" msgid="8091410079217079948">"Älä näytä kuvaussaraketta"</string>
     <string name="menu_view_in_owner" msgid="7228948660557554770">"Avaa sovelluksella <xliff:g id="SOURCE">%1$s</xliff:g>"</string>
     <string name="menu_new_window" msgid="2947837751796109126">"Uusi ikkuna"</string>
     <string name="menu_cut_to_clipboard" msgid="2878752142015026229">"Leikkaa"</string>
@@ -75,9 +86,10 @@
     <string name="button_show_provider" msgid="6905880493806292753">"Näytä palveluntarjoajan sovelluksessa"</string>
     <string name="button_back" msgid="1888621708934742182">"Takaisin"</string>
     <string name="button_show_in_folder" msgid="6674673478637689386">"Näytä kansiossa"</string>
+    <string name="button_open_trash" msgid="8152584341121216006">"Avaa roskakori"</string>
     <string name="not_sorted" msgid="7813496644889115530">"Ei lajittelua"</string>
     <string name="sort_dimension_name" msgid="6325591541414177579">"Nimi"</string>
-    <string name="sort_dimension_summary" msgid="7724534446881397860">"Yhteenveto"</string>
+    <string name="sort_dimension_summary" msgid="8050531309626240067">"Kuvaus"</string>
     <string name="sort_dimension_file_type" msgid="5779709622922085381">"Tyyppi"</string>
     <string name="sort_dimension_size" msgid="2190547351159472884">"Koko"</string>
     <string name="sort_dimension_date" msgid="4231005651895254033">"Muokattu"</string>
@@ -132,12 +144,14 @@
     <string name="toast_failed_delete" msgid="3453846588205817591">"Joidenkin dokumenttien poistaminen epäonnistui."</string>
     <string name="toast_share_over_limit" msgid="5805442886537093015">"Voit jakaa enintään <xliff:g id="COUNT">%1$d</xliff:g> tiedostoa"</string>
     <string name="toast_action_not_allowed" msgid="1329382474450572415">"Tämä ei ole sallitua"</string>
-    <string name="no_application_dialog_title" msgid="515133936841913019">"Avaa sovelluksessa"</string>
+    <string name="toast_op_not_allowed_for_shortcuts" msgid="8644996352874874167">"Toiminto ei ole sallittu"</string>
+    <string name="no_application_dialog_title" msgid="693344961697142788">"Sovellusta ei löydy"</string>
     <string name="no_application_dialog_message" msgid="5444094365658346573">"Tuettuja sovelluksia ei ole asennettu. Kokeile asentaa sellainen Play Kaupasta."</string>
     <string name="no_application_dialog_button" msgid="5317480122655874659">"Hae Play Kaupasta"</string>
     <string name="share_via" msgid="8725082736005677161">"Jaa sovelluksessa"</string>
     <string name="copy_notification_title" msgid="52256435625098456">"Kopioidaan tiedostoja"</string>
     <string name="compress_notification_title" msgid="6830195148113751021">"Pakataan tiedostoja"</string>
+    <string name="zip_notification_title" msgid="2858653527172763548">"Pakataan tiedostoja"</string>
     <string name="extract_notification_title" msgid="5067393961754430469">"Puretaan tiedostoja"</string>
     <string name="move_notification_title" msgid="3173424987049347605">"Siirretään tiedostoja"</string>
     <string name="delete_notification_title" msgid="2512757431856830792">"Poistetaan tiedostoja"</string>
@@ -164,8 +178,8 @@
       <item quantity="other">Poistetaan <xliff:g id="COUNT_1">%1$d</xliff:g> kohdetta.</item>
       <item quantity="one">Poistetaan <xliff:g id="COUNT_0">%1$d</xliff:g> kohde.</item>
     </plurals>
-    <string name="trashing" msgid="4643112474465979863">"{count,plural, =1{Poistetaan <xliff:g id="COUNT_0">{count}</xliff:g> kohde}other{Poistetaan <xliff:g id="COUNT_1">{count}</xliff:g> kohdetta}}"</string>
-    <string name="restoring_from_trash" msgid="6346617909485060438">"{count,plural, =1{Palautetaan <xliff:g id="COUNT_0">{count}</xliff:g> kohdetta}other{Palautetaan <xliff:g id="COUNT_1">{count}</xliff:g> kohdetta}}"</string>
+    <string name="trashing" msgid="1363875848930103999">"{count,plural, =1{Siirretään # tiedosto roskakoriin}other{Siirretään # tiedostoa roskakoriin}}"</string>
+    <string name="restoring_from_trash" msgid="5480701724791535806">"{count,plural, =1{Palautetaan # tiedostoa}other{Palautetaan # tiedostoa}}"</string>
     <string name="undo" msgid="2902438994196400565">"Kumoa"</string>
     <string name="copy_preparing" msgid="4759516490222449324">"Valmistellaan…"</string>
     <string name="compress_preparing" msgid="7401605598969019696">"Valmistellaan…"</string>
@@ -178,42 +192,51 @@
     <string name="move_to_trash_progress" msgid="7117416860391196406">"<xliff:g id="COUNT_0">%1$d</xliff:g>/<xliff:g id="TOTALCOUNT">%2$d</xliff:g>"</string>
     <string name="restore_from_trash_progress" msgid="6003816126633922428">"<xliff:g id="COUNT_0">%1$d</xliff:g>/<xliff:g id="TOTALCOUNT">%2$d</xliff:g>"</string>
     <string name="copy_error_notification_title" msgid="5426120176307563562">"{count,plural, =1{<xliff:g id="COUNT_0">{count}</xliff:g> kohteen kopioiminen epäonnistui.}other{<xliff:g id="COUNT_1">{count}</xliff:g> kohteen kopioiminen epäonnistui}}"</string>
+    <string name="copy_error_2" msgid="2553643062672015237">"{count,plural, =1{# tiedoston kopioiminen epäonnistui}other{# tiedoston kopioiminen epäonnistui}}"</string>
     <string name="compress_error_notification_title" msgid="7238511273511460182">"{count,plural, =1{<xliff:g id="COUNT_0">{count}</xliff:g> kohteen pakkaaminen epäonnistui}other{<xliff:g id="COUNT_1">{count}</xliff:g> kohteen pakkaaminen epäonnistui}}"</string>
-    <string name="extract_error_notification_title" msgid="2644824788957108658">"{count,plural, =1{<xliff:g id="COUNT_0">{count}</xliff:g> kohteen poimiminen epäonnistui}other{<xliff:g id="COUNT_1">{count}</xliff:g> kohteen poimiminen epäonnistui}}"</string>
+    <string name="compress_error_2" msgid="7035005747251809554">"{count,plural, =1{# tiedoston pakkaaminen epäonnistui}other{# tiedoston pakkaaminen epäonnistui}}"</string>
+    <string name="extract_error_2" msgid="6428683221773394140">"{count,plural, =1{# tiedoston purkaminen epäonnistui}other{# tiedoston purkaminen epäonnistui}}"</string>
     <string name="move_error_notification_title" msgid="7094494564254143696">"{count,plural, =1{<xliff:g id="COUNT_0">{count}</xliff:g> kohteen siirtäminen epäonnistui}other{<xliff:g id="COUNT_1">{count}</xliff:g> kohteen siirtäminen epäonnistui}}"</string>
+    <string name="move_error_2" msgid="8089293906168239907">"{count,plural, =1{# tiedoston siirtäminen epäonnistui}other{# tiedoston siirtäminen epäonnistui}}"</string>
     <string name="delete_error_notification_title" msgid="6510460288416352803">"{count,plural, =1{<xliff:g id="COUNT_0">{count}</xliff:g> kohteen poistaminen epäonnistui}other{<xliff:g id="COUNT_1">{count}</xliff:g> kohteen poistaminen epäonnistui}}"</string>
-    <string name="move_to_trash_error_notification_title" msgid="2766270864756812690">"{count,plural, =1{<xliff:g id="COUNT_0">{count}</xliff:g> kohteen siirtäminen roskakoriin epäonnistui}other{<xliff:g id="COUNT_1">{count}</xliff:g> kohteen siirtäminen roskakoriin epäonnistui}}"</string>
-    <string name="restore_from_trash_error_notification_title" msgid="5097907450416686866">"{count,plural, =1{<xliff:g id="COUNT_0">{count}</xliff:g> kohdetta ei voitu palauttaa}other{<xliff:g id="COUNT_1">{count}</xliff:g> kohdetta ei voitu palauttaa}}"</string>
+    <string name="delete_error_2" msgid="5368270399330057918">"{count,plural, =1{# tiedoston poistaminen epäonnistui}other{# tiedoston poistaminen epäonnistui}}"</string>
+    <string name="trash_error_2" msgid="5039906473394301366">"{count,plural, =1{# tiedoston siirtäminen roskakoriin epäonnistui}other{# tiedoston siirtäminen roskakoriin epäonnistui}}"</string>
+    <string name="restore_error_2" msgid="3095191316757396713">"{count,plural, =1{# tiedoston palauttaminen epäonnistui}other{# tiedoston palauttaminen epäonnistui}}"</string>
     <string name="notification_touch_for_details" msgid="2385563502445129570">"Tarkastele tietoja napauttamalla."</string>
     <string name="close" msgid="905969391788869975">"Sulje"</string>
     <plurals name="copy_failure_alert_content" formatted="false" msgid="5570549471912990536">
       <item quantity="other">Tiedostoja <xliff:g id="LIST_1">%1$s</xliff:g> ei kopioitu</item>
       <item quantity="one">Tiedostoa <xliff:g id="LIST_0">%1$s</xliff:g> ei kopioitu</item>
     </plurals>
+    <string name="copy_failure_alert_title" msgid="7723812563283375273">"{count,plural, =1{Tätä tiedostoa ei kopioitu:}other{Näitä tiedostoja ei kopioitu:}}"</string>
     <plurals name="compress_failure_alert_content" formatted="false" msgid="5760632881868842400">
       <item quantity="other">Tiedostoja <xliff:g id="LIST_1">%1$s</xliff:g> ei pakattu</item>
       <item quantity="one">Tiedostoa <xliff:g id="LIST_0">%1$s</xliff:g> ei pakattu</item>
     </plurals>
+    <string name="compress_failure_alert_title" msgid="4443538179586440935">"{count,plural, =1{Tätä tiedostoa ei pakattu:}other{Näitä tiedostoja ei pakattu:}}"</string>
     <plurals name="extract_failure_alert_content" formatted="false" msgid="7572748127571720803">
       <item quantity="other">Tiedostoja <xliff:g id="LIST_1">%1$s</xliff:g> ei purettu</item>
       <item quantity="one">Tiedostoa <xliff:g id="LIST_0">%1$s</xliff:g> ei purettu</item>
     </plurals>
+    <string name="extract_failure_alert_title" msgid="1720241850610374">"{count,plural, =1{Tätä tiedostoa ei purettu:}other{Näitä tiedostoja ei purettu:}}"</string>
     <plurals name="move_failure_alert_content" formatted="false" msgid="2747390342670799196">
       <item quantity="other">Tiedostoja <xliff:g id="LIST_1">%1$s</xliff:g> ei siirretty</item>
       <item quantity="one">Tiedostoa <xliff:g id="LIST_0">%1$s</xliff:g> ei siirretty</item>
     </plurals>
+    <string name="move_failure_alert_title" msgid="4574011719660769064">"{count,plural, =1{Tätä tiedostoa ei siirretty:}other{Näitä tiedostoja ei siiretty:}}"</string>
     <plurals name="delete_failure_alert_content" formatted="false" msgid="6122372614839711711">
       <item quantity="other">Tiedostoja <xliff:g id="LIST_1">%1$s</xliff:g> ei poistettu</item>
       <item quantity="one">Tiedostoa <xliff:g id="LIST_0">%1$s</xliff:g> ei poistettu</item>
     </plurals>
+    <string name="delete_failure_alert_title" msgid="1416471664552009873">"{count,plural, =1{Tätä tiedostoa ei poistettu:}other{Näitä tiedostoja ei poistettu:}}"</string>
+    <string name="trash_failure_alert_title" msgid="5133847817235721185">"{count,plural, =1{Tätä tiedostoa ei siirretty roskakoriin:}other{Näitä tiedostoja ei siirretty roskakoriin:}}"</string>
+    <string name="restore_from_trash_failure_alert_title" msgid="8539033885115121134">"{count,plural, =1{Tätä tiedostoa ei palautettu:}other{Näitä tiedostoja ei palautettu:}}"</string>
     <plurals name="copy_converted_warning_content" formatted="false" msgid="7433742181712126588">
       <item quantity="other">Tiedostot <xliff:g id="LIST_1">%1$s</xliff:g> muunnettiin toiseen muotoon</item>
       <item quantity="one">Tiedosto <xliff:g id="LIST_0">%1$s</xliff:g> muunnettiin toiseen muotoon</item>
     </plurals>
-    <plurals name="clipboard_files_clipped" formatted="false" msgid="4847061634862926902">
-      <item quantity="other"><xliff:g id="COUNT_1">%1$d</xliff:g> kohdetta kopioitu leikepöydälle.</item>
-      <item quantity="one"><xliff:g id="COUNT_0">%1$d</xliff:g> kohde kopioitu leikepöydälle.</item>
-    </plurals>
+    <string name="copy_converted_warning_title" msgid="312091919227984842">"{count,plural, =1{Tämä tiedosto on muunnettu toiseen muotoon:}other{Nämä tiedostot on muunnettu toiseen muotoon:}}"</string>
+    <string name="clipboard_files_added" msgid="168194813269188197">"{count,plural, =1{# kohde lisätty leikepöydälle}other{# kohdetta lisätty leikepöydälle}}"</string>
     <string name="read_only_label" msgid="894442752344379606">"Vain luku"</string>
     <string name="read_only_explanation" msgid="213951358525192590">"Voit nähdä nämä tiedostot, mutta joitakin toimintoja ei tueta"</string>
     <string name="cannot_extract_in_read_only_folder" msgid="8234900543730064252">"Arkisto on vain luku ‑tilassa, eikä sitä voi purkaa täällä."</string>
@@ -222,15 +245,23 @@
     <string name="rename_error" msgid="6700093173508118635">"Dokumentin nimen muuttaminen epäonnistui."</string>
     <string name="menu_eject_root" msgid="9215040039374893613">"Poista"</string>
     <string name="notification_copy_files_converted_title" msgid="6916768494891833365">"Joitakin tiedostoja muunnettiin."</string>
-    <string name="copy_in_progress" msgid="3314396340163205014">"{count,plural, =1{Kopioidaan tiedostoa (<xliff:g id="FILENAME">{filename}</xliff:g>) tänne: <xliff:g id="DIRECTORY_0">{directory}</xliff:g>}other{Kopioidaan # tiedostoa tänne: <xliff:g id="DIRECTORY_1">{directory}</xliff:g>}}"</string>
-    <string name="extract_in_progress" msgid="519951867474301835">"{count,plural, =1{Puretaan arkistoa (<xliff:g id="FILENAME">{filename}</xliff:g>) tänne: \"<xliff:g id="DIRECTORY_0">{directory}</xliff:g>\"}other{Puretaan # arkistoa tänne: \"<xliff:g id="DIRECTORY_1">{directory}</xliff:g>\"}}"</string>
-    <string name="move_in_progress" msgid="2569791135683944801">"{count,plural, =1{Siirretään tiedostoa (<xliff:g id="FILENAME">{filename}</xliff:g>) tänne: <xliff:g id="DIRECTORY_0">{directory}</xliff:g>}other{Siirretään # tiedostoa tänne: <xliff:g id="DIRECTORY_1">{directory}</xliff:g>}}"</string>
-    <string name="delete_in_progress" msgid="9032473164450943788">"{count,plural, =1{Poistetaan tiedostoa (<xliff:g id="FILENAME">{filename}</xliff:g>)}other{Poistetaan # tiedostoa}}"</string>
-    <string name="trash_in_progress" msgid="6889113199087672853">"{count,plural, =1{Poistetaan: <xliff:g id="FILENAME">{filename}</xliff:g>}other{Poistetaan # tiedostoa}}"</string>
-    <string name="restore_in_progress" msgid="6756221866797865046">"{count,plural, =1{Palautetaan: <xliff:g id="FILENAME">{filename}</xliff:g>}other{Palautetaan # tiedostoa…}}"</string>
-    <string name="compress_in_progress" msgid="6585173688835909381">"{count,plural, =1{Pakataan tiedostoa (<xliff:g id="FILENAME">{filename}</xliff:g>)}other{Pakataan # tiedostoa}}"</string>
+    <string name="copy_specific_file_in_progress" msgid="2492589332201937030">"Kopioidaan tiedostoa (<xliff:g id="FILENAME">{filename}</xliff:g>) tänne: <xliff:g id="DIRECTORY">{directory}</xliff:g>"</string>
+    <string name="copy_in_progress" msgid="6872096819249174615">"{count,plural, =1{Kopioidaan # tiedostoa tänne: <xliff:g id="DIRECTORY_0">{directory}</xliff:g>}other{Kopioidaan # tiedostoa tänne: <xliff:g id="DIRECTORY_1">{directory}</xliff:g>}}"</string>
+    <string name="extract_specific_file_in_progress" msgid="1162381859640495308">"Puretaan tiedostoa (<xliff:g id="FILENAME">{filename}</xliff:g>) tänne: <xliff:g id="DIRECTORY">{directory}</xliff:g>"</string>
+    <string name="extract_in_progress" msgid="4629395179865084830">"{count,plural, =1{Puretaan # tiedostoa tänne: <xliff:g id="DIRECTORY_0">{directory}</xliff:g>}other{Puretaan # tiedostoa tänne: <xliff:g id="DIRECTORY_1">{directory}</xliff:g>}}"</string>
+    <string name="move_specific_file_in_progress" msgid="6369336484584073740">"Siirretään tiedostoa (<xliff:g id="FILENAME">{filename}</xliff:g>) tänne: <xliff:g id="DIRECTORY">{directory}</xliff:g>"</string>
+    <string name="move_in_progress" msgid="326356777470353315">"{count,plural, =1{Siirretään # tiedostoa tänne: <xliff:g id="DIRECTORY_0">{directory}</xliff:g>}other{Siirretään # tiedostoa tänne: <xliff:g id="DIRECTORY_1">{directory}</xliff:g>}}"</string>
+    <string name="delete_specific_file_in_progress" msgid="7262273537447952230">"Poistetaan tiedostoa (<xliff:g id="FILENAME">{filename}</xliff:g>)"</string>
+    <string name="delete_in_progress" msgid="7743890721129810508">"{count,plural, =1{Poistetaan # tiedostoa}other{Poistetaan # tiedostoa}}"</string>
+    <string name="trash_specific_file_in_progress" msgid="8266568481798889707">"Siirretään tiedostoa (<xliff:g id="FILENAME">{filename}</xliff:g>) roskakoriin"</string>
+    <string name="trash_in_progress" msgid="2509104069807418022">"{count,plural, =1{Siirretään # tiedostoa roskakoriin}other{Siirretään # tiedostoa roskakoriin}}"</string>
+    <string name="restore_specific_file_in_progress" msgid="6034897285865039861">"Palautetaan tiedostoa (<xliff:g id="FILENAME">{filename}</xliff:g>)"</string>
+    <string name="restore_in_progress" msgid="9063203913920540783">"{count,plural, =1{Palautetaan # tiedostoa}other{Palautetaan # tiedostoa}}"</string>
+    <string name="compress_specific_file_in_progress" msgid="7855233703746784378">"Pakataan tiedostoa (<xliff:g id="FILENAME">{filename}</xliff:g>)"</string>
+    <string name="compress_in_progress" msgid="5311444499230611877">"{count,plural, =1{Pakataan # tiedostoa}other{Pakataan # tiedostoa}}"</string>
     <string name="job_progress_icon_label" msgid="1387365706178067075">"Näytä tiedoston edistyminen"</string>
     <string name="job_progress_panel_title" msgid="1640388840961608168">"Tiedoston edistyminen"</string>
+    <string name="job_progress_panel_dismiss_all" msgid="5858398094668912463">"Hylkää kaikki"</string>
     <string name="job_progress_item_completed" msgid="3933347715328014840">"Valmis"</string>
     <string name="job_progress_item_canceled" msgid="8915289522101993231">"Peruttu"</string>
     <string name="job_progress_item_see_details" msgid="2069387639574541325">"Katso tiedot"</string>
@@ -240,11 +271,15 @@
     <string name="delete_completed" msgid="4149401155614626199">"Poistettu"</string>
     <string name="compress_completed" msgid="6522047921428919799">"Pakattu"</string>
     <string name="extract_completed" msgid="8824595789915249972">"Purettu"</string>
+    <string name="trash_completed" msgid="5527806383436622529">"Roskakorissa"</string>
+    <string name="restore_completed" msgid="4705296829051759784">"Palautettu"</string>
     <string name="copy_failed" msgid="3700193913993844675">"Kopiointi ei onnistunut"</string>
     <string name="move_failed" msgid="7692364307225994220">"Siirto ei onnistunut"</string>
     <string name="delete_failed" msgid="2642684566325252513">"Poistaminen ei onnistunut"</string>
     <string name="compress_failed" msgid="7397502181042157261">"Pakkaaminen ei onnistunut"</string>
     <string name="extract_failed" msgid="8372397499452831323">"Purkaminen ei onnistunut"</string>
+    <string name="trash_failed" msgid="4655759218201171408">"Ei siirtynyt roskakoriin"</string>
+    <string name="restore_failed" msgid="1967876571708544126">"Palautus epäonnistui"</string>
     <string name="expand_label" msgid="5683357671239615207">"Laajenna"</string>
     <string name="collapse_label" msgid="4530974883269531062">"Tiivistä"</string>
     <string name="open_external_dialog_request" msgid="8173558471322861268">"Myönnetäänkö sovellukselle <xliff:g id="APPNAME"><b>^1</b></xliff:g> sijainnissa <xliff:g id="STORAGE"><i>^3</i></xliff:g> olevan hakemiston <xliff:g id="DIRECTORY"><i>^2</i></xliff:g> käyttöoikeus?"</string>
@@ -266,20 +301,9 @@
       <item quantity="other"><xliff:g id="COUNT_1">%1$d</xliff:g> kohdetta</item>
       <item quantity="one"><xliff:g id="COUNT_0">%1$d</xliff:g> kohde</item>
     </plurals>
-    <string name="delete_filename_confirmation_message" msgid="8338069763240613258">"Poistetaanko <xliff:g id="NAME">%1$s</xliff:g>?"</string>
-    <string name="delete_foldername_confirmation_message" msgid="9084085260877704140">"Poistetaanko kansio <xliff:g id="NAME">%1$s</xliff:g> ja sen sisältö?"</string>
-    <plurals name="delete_files_confirmation_message" formatted="false" msgid="4866664063250034142">
-      <item quantity="other">Poistetaanko <xliff:g id="COUNT_1">%1$d</xliff:g> tiedostoa?</item>
-      <item quantity="one">Poistetaanko <xliff:g id="COUNT_0">%1$d</xliff:g> tiedosto?</item>
-    </plurals>
-    <plurals name="delete_folders_confirmation_message" formatted="false" msgid="1028946402799686388">
-      <item quantity="other">Poistetaanko <xliff:g id="COUNT_1">%1$d</xliff:g> kansiota ja niiden sisältö?</item>
-      <item quantity="one">Poistetaanko <xliff:g id="COUNT_0">%1$d</xliff:g> kansio ja sen sisältö?</item>
-    </plurals>
-    <plurals name="delete_items_confirmation_message" formatted="false" msgid="7285090426511028179">
-      <item quantity="other">Poistetaanko <xliff:g id="COUNT_1">%1$d</xliff:g> kohdetta?</item>
-      <item quantity="one">Poistetaanko <xliff:g id="COUNT_0">%1$d</xliff:g> kohde?</item>
-    </plurals>
+    <string name="delete_forever_dialog_title" msgid="799779565921010957">"Poistetaanko pysyvästi?"</string>
+    <string name="delete_forever_confirmation_message" msgid="514849549688443881">"{count,plural, =1{\"<xliff:g id="NAME">{name}</xliff:g>\" poistetaan pysyvästi. Tätä ei voi kumota.}other{# kohdetta poistetaan pysyvästi. Tätä ei voi kumota.}}"</string>
+    <string name="delete_forever_from_trash_confirmation_message" msgid="2152471525710826703">"{count,plural, =1{\"<xliff:g id="NAME">{name}</xliff:g>\" poistetaan pysyvästi. Tätä ei voi kumota.}other{# roskakorissa olevaa kohdetta poistetaan pysyvästi. Tätä ei voi kumota.}}"</string>
     <string name="images_shortcut_label" msgid="2545168016070493574">"Kuvahaku"</string>
     <string name="archive_loading_failed" msgid="7243436722828766996">"Arkistoa ei voi selata. Tiedosto on vioittunut tai sen muotoa ei tueta."</string>
     <string name="name_conflict" msgid="28407269328862986">"Samanniminen tiedosto on jo olemassa."</string>
@@ -288,7 +312,9 @@
     <string name="sign_in" msgid="6253762676723505592">"Kirjaudu sisään"</string>
     <string name="new_archive_file_name" msgid="1604650338077249838">"arkisto<xliff:g id="EXTENSION">%s</xliff:g>"</string>
     <string name="new_archive_file_name_2" msgid="6787685985722032255">"Arkisto"</string>
-    <string name="overwrite_file_confirmation_message" msgid="2496109652768222716">"Korvataanko <xliff:g id="NAME">%1$s</xliff:g>?"</string>
+    <string name="overwrite_file_confirmation_title" msgid="4314969202559855159">"Korvataanko tiedosto?"</string>
+    <string name="overwrite_file_confirmation_message" msgid="7780746502731666434">"Tiedosto nimeltä \"<xliff:g id="NAME">%1$s</xliff:g>\" on jo olemassa."</string>
+    <string name="overwrite_file_confirmation_positive_button" msgid="5343276672335028419">"Korvaa"</string>
     <string name="continue_in_background" msgid="1974214559047793331">"Jatka taustalla"</string>
     <plurals name="selected_count" formatted="false" msgid="7555250236512981129">
       <item quantity="other"><xliff:g id="COUNT_1">%1$d</xliff:g> valittu</item>
@@ -314,20 +340,22 @@
     <string name="chip_title_documents" msgid="7432457563000753983">"Dokumentit"</string>
     <string name="chip_title_large_files" msgid="7740269190493883980">"Suuret tiedostot"</string>
     <string name="chip_title_from_this_week" msgid="4961536405220379672">"Tällä viikolla"</string>
-    <string name="input_hint_new_folder" msgid="479672411219725677">"Kansion nimi"</string>
-    <string name="input_hint_rename" msgid="8390711744270994452">"Uusi nimi"</string>
+    <string name="input_hint_new_folder" msgid="5579927005544975259">"Nimi"</string>
+    <string name="input_hint_rename" msgid="4501630494874065128">"Nimi"</string>
     <string name="preview_file" msgid="4056622696305432343">"Esikatsele tiedostoa <xliff:g id="FILENAME">%1$s</xliff:g>"</string>
     <string name="preview_work_file" msgid="4495643735563487273">"Esikatsele työtiedostoa <xliff:g id="FILENAME">%1$s</xliff:g>"</string>
     <string name="preview_cross_profile_file" msgid="7457849216193029610">"Esikatsele <xliff:g id="PROFILE">%1$s</xliff:g>-profiilin tiedostoa: <xliff:g id="FILENAME">%2$s</xliff:g>"</string>
     <string name="apps_row_title" msgid="3340490016663092925">"Selaa tiedostoja muissa sovelluksissa"</string>
     <string name="anonymous_application" msgid="7633027057951625862">"Anonyymi"</string>
     <string name="open_tree_button" msgid="6402871398424497776">"Käytä tätä kansiota"</string>
-    <string name="open_tree_dialog_title" msgid="6339509533852318569">"Saako <xliff:g id="APPNAME">%1$s</xliff:g> pääsyn tiedostoihin (<xliff:g id="DIRECTORY">%2$s</xliff:g>)?"</string>
-    <string name="open_tree_dialog_message" msgid="4120695398430659628">"<xliff:g id="APPNAME">%1$s</xliff:g> saa pääsyn nykyiseen ja tulevaan sisältöön (<xliff:g id="DIRECTORY">%2$s</xliff:g>)."</string>
+    <string name="open_tree_dialog_title" msgid="4851450731067189325">"Saako <xliff:g id="APPNAME">%1$s</xliff:g> pääsyn kansioon?"</string>
+    <string name="open_tree_dialog_message" msgid="962249605918827059">"Salli pääsy: \"<xliff:g id="DIRECTORY">%1$s</xliff:g>\"."</string>
     <string name="directory_blocked_header_title" msgid="1164584889578740066">"Tämä kansio ei ole käytettävissä"</string>
     <string name="directory_blocked_header_subtitle" msgid="2829150911849033408">"Valitse toinen kansio tietosuojasi turvaamiseksi"</string>
     <string name="create_new_folder_button" msgid="8859613309559794890">"Luo uusi kansio"</string>
     <string name="search_bar_hint" msgid="146031513183888721">"Hae tältä laitteelta"</string>
+    <string name="search_bar_generic_hint" msgid="8923500515355253888">"Hae"</string>
+    <string name="search_results" msgid="7662182646512984171">"Hakutulokset"</string>
     <string name="search_bar_clear" msgid="2072000748823434188">"Tyhjennä teksti"</string>
     <string name="search_location_root_folder" msgid="4280523560213522303">"Juurikansio"</string>
     <string name="search_location_everywhere" msgid="747799487494833887">"Kaikkialla"</string>
@@ -353,8 +381,20 @@
     <string name="peek_metadata_size" msgid="2377426288276139988">"Koko"</string>
     <string name="peek_metadata_type" msgid="1386923517471758392">"Tyyppi"</string>
     <string name="peek_metadata_date_modified" msgid="5403086549396155362">"Muokkauspäivä"</string>
+    <string name="get_info_positive_button" msgid="667388202590744953">"OK"</string>
+    <string name="get_info_unknown_file_type" msgid="7976646447316381912">"Tuntematon"</string>
     <string name="a11y_peek_navigation_icon" msgid="6692873662104342476">"Piilota tiedoston esikatselu"</string>
     <string name="a11y_peek_image_preview" msgid="3917148390186060263">"Kuvan esikatselu: <xliff:g id="FILENAME">%s</xliff:g>"</string>
     <string name="a11y_peek_hide_info_button" msgid="918293386310947930">"Piilota tietopaneeli"</string>
     <string name="a11y_peek_show_info_button" msgid="9028075652389911413">"Näytä tietopaneeli"</string>
+    <string name="trash_page_empty_title" msgid="7738038596025884023">"Roskakori on tyhjä"</string>
+    <string name="empty_trash_banner_message" msgid="2993707579621525486">"Roskakorissa yli 30 päivää olleet kohteet poistetaan automaattisesti"</string>
+    <string name="empty_trash_banner_button" msgid="1519946484798771236">"Tyhjennä roskakori"</string>
+    <string name="empty_trash_dialog_title" msgid="4514618908297336521">"Tyhjennetäänkö roskakori?"</string>
+    <string name="empty_trash_dialog_message" msgid="520865296928962854">"Kaikki roskakorissa olevat kohteet poistuvat pysyvästi. Kumoaminen ei ole mahdollista."</string>
+    <string name="empty_trash_dialog_action_button" msgid="4265315882979882955">"Poista pysyvästi"</string>
+    <string name="file_open_in_trash_dialog_title" msgid="2243034805337666376">"{count,plural, =1{Kohde on roskakorissa}other{Kohteet ovat roskakorissa}}"</string>
+    <string name="file_open_in_trash_dialog_message" msgid="907046525752260366">"{count,plural, =1{Jos haluat pääsyn tähän kohteeseen, palauta se tai vedä se pois roskakorista}other{Jos haluat pääsyn näihin kohteisiin, palauta ne tai vedä ne pois roskakorista}}"</string>
+    <string name="file_open_in_trash_dialog_restore_action_button" msgid="3361861500466913305">"Palauta"</string>
+    <string name="you_are_offline_banner_message" msgid="4188603129472293852">"Olet tällä hetkellä offline-tilassa. Kaikki tiedostot ja toiminnot eivät ole käytettävissä. Muodosta internetyhteys, niin saat täydet pääsyoikeudet."</string>
 </resources>

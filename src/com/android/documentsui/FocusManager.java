@@ -16,12 +16,14 @@
 
 package com.android.documentsui;
 
-import static com.android.documentsui.base.DocumentInfo.getCursorString;
-import static com.android.documentsui.base.SharedMinimal.DEBUG;
 import static androidx.core.util.Preconditions.checkNotNull;
 
-import androidx.annotation.ColorRes;
-import androidx.annotation.Nullable;
+import static com.android.documentsui.base.DocumentInfo.getCursorString;
+import static com.android.documentsui.base.SharedMinimal.DEBUG;
+import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
+import static com.android.documentsui.util.Material3Config.getRes;
+
+import android.content.res.ColorStateList;
 import android.database.Cursor;
 import android.os.Handler;
 import android.os.Looper;
@@ -36,8 +38,11 @@ import android.text.style.BackgroundColorSpan;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
+import android.widget.Button;
 import android.widget.TextView;
 
+import androidx.annotation.ColorRes;
+import androidx.annotation.Nullable;
 import androidx.recyclerview.selection.FocusDelegate;
 import androidx.recyclerview.selection.ItemDetailsLookup.ItemDetails;
 import androidx.recyclerview.selection.SelectionTracker;
@@ -52,6 +57,9 @@ import com.android.documentsui.base.Procedure;
 import com.android.documentsui.dirlist.DocumentHolder;
 import com.android.documentsui.dirlist.DocumentsAdapter;
 import com.android.documentsui.dirlist.FocusHandler;
+import com.android.documentsui.util.ColorUtils;
+
+import com.google.android.material.button.MaterialButton;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -135,7 +143,8 @@ public final class FocusManager extends FocusDelegate<String> implements FocusHa
     @Override
     public void onFocusChange(View v, boolean hasFocus) {
         // Remember focus events on items.
-        if (hasFocus && mScope.isValid() && v.getParent() == mScope.view) {
+        mScope.mHasFocus = hasFocus && mScope.isValid() && v.getParent() == mScope.view;
+        if (mScope.mHasFocus) {
             mScope.lastFocusPosition = mScope.view.getChildAdapterPosition(v);
         }
     }
@@ -198,7 +207,7 @@ public final class FocusManager extends FocusDelegate<String> implements FocusHa
     /*
      * Attempts to put focus on the document associated with the given modelId. If item does not
      * exist yet in the layout, this sets a pending modelId to be used when {@code
-     * #applyPendingFocus()} is called next time.
+     * #onLayoutCompleted()} is called next time.
      */
     @Override
     public void focusDocument(String modelId) {
@@ -223,16 +232,25 @@ public final class FocusManager extends FocusDelegate<String> implements FocusHa
 
     @Override
     public int getFocusedPosition() {
+        if (isUseMaterial3FlagEnabled() && !mScope.mHasFocus) {
+            return RecyclerView.NO_POSITION;
+        }
         return mScope.lastFocusPosition;
     }
 
     @Override
     public boolean hasFocusedItem() {
+        if (isUseMaterial3FlagEnabled() && !mScope.mHasFocus) {
+            return false;
+        }
         return mScope.lastFocusPosition != RecyclerView.NO_POSITION;
     }
 
     @Override
     public @Nullable String getFocusModelId() {
+        if (isUseMaterial3FlagEnabled() && !mScope.mHasFocus) {
+            return null;
+        }
         if (mScope.lastFocusPosition != RecyclerView.NO_POSITION) {
             DocumentHolder holder = (DocumentHolder) mScope.view
                     .findViewHolderForAdapterPosition(mScope.lastFocusPosition);
@@ -672,8 +690,9 @@ public final class FocusManager extends FocusDelegate<String> implements FocusHa
         mScope.layout = (GridLayoutManager) view.getLayoutManager();
         mScope.model = model;
 
-        mScope.lastFocusPosition = RecyclerView.NO_POSITION;
         mScope.pendingFocusId = null;
+        mScope.lastFocusPosition = RecyclerView.NO_POSITION;
+        mScope.mHasFocus = false;
 
         return this;
     }
@@ -686,9 +705,45 @@ public final class FocusManager extends FocusDelegate<String> implements FocusHa
 
         private @Nullable String pendingFocusId;
         private int lastFocusPosition = RecyclerView.NO_POSITION;
+        private boolean mHasFocus = false;
 
         boolean isValid() {
             return (view != null && model != null);
         }
+    }
+
+    /**
+     * Set the focus ring style for a Material button when it's in the focus state. Note: for
+     * simplicity we just use Material button's stroke as the focus ring, and we don't support the
+     * focus ring offset. TODO(b/381957932): Remove this once Material Button supports focus ring.
+     */
+    public static void setButtonFocusStyle(@Nullable Button button) {
+        if (!isUseMaterial3FlagEnabled()) {
+            return;
+        }
+        if (!(button instanceof MaterialButton)) {
+            return;
+        }
+        MaterialButton materialButton = (MaterialButton) button;
+        // Outline button has its own stroke color and width, we need to maintain these when
+        // the button is not in the focus state, so store them first.
+        final ColorStateList originalStrokeColor = materialButton.getStrokeColor();
+        final int originalStrokeWidth = materialButton.getStrokeWidth();
+
+        final int focusRingColor =
+                ColorUtils.resolveMaterialColorAttribute(
+                        button.getContext(), com.google.android.material.R.attr.colorSecondary);
+        final int focusRingWidth =
+                button.getResources().getDimensionPixelSize(getRes(R.dimen.focus_ring_width));
+        materialButton.setOnFocusChangeListener(
+                (view, hasFocus) -> {
+                    if (hasFocus && view.hasWindowFocus()) {
+                        materialButton.setStrokeColor(ColorStateList.valueOf(focusRingColor));
+                        materialButton.setStrokeWidth(focusRingWidth);
+                    } else {
+                        materialButton.setStrokeColor(originalStrokeColor);
+                        materialButton.setStrokeWidth(originalStrokeWidth);
+                    }
+                });
     }
 }

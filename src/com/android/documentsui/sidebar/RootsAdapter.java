@@ -97,7 +97,7 @@ class RootsAdapter extends ArrayAdapter<Item> {
                     v -> ((ListView) parent).performItemClick(v, position, getItemId(position)));
         }
 
-        if (item.isRoot()) {
+        if (item.isRoot() || item.isShortcut()) {
             view.setTag(getRes(R.id.item_position_tag), position);
             view.setOnDragListener(mDragListener);
         } else {
@@ -122,7 +122,7 @@ class RootsAdapter extends ArrayAdapter<Item> {
         final Item item = getItem(position);
         if (item instanceof RootAndAppItem) {
             return TYPE_ROOT_AND_APP;
-        } else if (item instanceof RootItem) {
+        } else if (item instanceof BaseSidebarEntryItem) {
             return TYPE_ROOT;
         } else if (item instanceof AppItem) {
             return TYPE_APP;

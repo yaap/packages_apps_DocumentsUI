@@ -34,19 +34,24 @@
         <item name="android:maxHeight">@dimen/icon_size_headline_large</item>
     </style>
 
-    <style name="JobProgressToolbarIndicatorStyle" parent="@style/Widget.Material3.CircularProgressIndicator.ExtraSmall">
-        <item name="android:background">?attr/actionBarItemBackground</item>
+    <style name="JobProgressToolbarIndicatorStyle" parent="@style/Widget.Material3Expressive.CircularProgressIndicator">
+        <item name="android:max">100</item>
         <item name="indicatorSize">@dimen/job_progress_toolbar_indicator_size</item>
         <item name="indicatorInset">0dp</item>
+        <!-- Right now there's no ExtraSmall variant for Expressive circular progress indicator, so
+             we manually override the thickness attribute here with the value from the style
+             "Widget.Material3.CircularProgressIndicator.ExtraSmall".
+        -->
+        <item name="trackThickness">2.5dp</item>
     </style>
 
-    <style name="ToolbarStyles" parent="@style/Widget.Material3.Toolbar">
+    <style name="ToolbarStyles" parent="@style/Widget.Material3Expressive.Toolbar">
         <item name="android:paddingStart">@dimen/toolbar_padding_start</item>
         <item name="android:paddingEnd">@dimen/toolbar_padding_end</item>
         <item name="contentInsetStart">@dimen/toolbar_content_inset_start</item>
         <item name="contentInsetStartWithNavigation">@dimen/toolbar_content_inset_start</item>
         <item name="titleMarginStart">@dimen/search_bar_text_margin_start_m3</item>
-        <item name="titleTextAppearance">@style/ToolbarTitleM3</item>
+        <item name="titleTextAppearance">@style/AppBarTitle</item>
     </style>
 
     <style name="ThumbnailCardViewStyle" parent="@style/Widget.Material3.CardView.Outlined">
@@ -115,15 +120,15 @@
         <item name="android:overlapAnchor">false</item>
     </style>
 
-    <style name="MaterialButtonM3" parent="@style/Widget.Material3.Button.UnelevatedButton">
+    <style name="MaterialButtonM3" parent="@style/Widget.Material3Expressive.Button">
         <item name="android:textAppearance">@style/MaterialButtonTextAppearanceM3</item>
     </style>
 
-    <style name="MaterialTonalButton" parent="@style/Widget.Material3.Button.TonalButton">
+    <style name="MaterialTonalButton" parent="@style/Widget.Material3Expressive.Button.TonalButton">
         <item name="android:textAppearance">@style/MaterialButtonTextAppearanceM3</item>
     </style>
 
-    <style name="MaterialOutlinedButtonM3" parent="@style/Widget.Material3.Button.OutlinedButton">
+    <style name="MaterialOutlinedButtonM3" parent="@style/Widget.Material3Expressive.Button.OutlinedButton">
         <item name="android:textAppearance">@style/MaterialButtonTextAppearanceM3</item>
     </style>
 
@@ -131,16 +136,32 @@
         <item name="android:layout_marginStart">8dp</item>
     </style>
 
-    <style name="DialogTextButtonM3" parent="@style/Widget.Material3.Button.TextButton.Dialog">
+    <style name="DialogTextButtonM3" parent="@style/Widget.Material3Expressive.Button.TextButton.Dialog">
         <item name="android:textAppearance">@style/MaterialButtonTextAppearanceM3</item>
     </style>
 
-    <style name="MaterialAlertDialogThemeM3" parent="@style/ThemeOverlay.Material3.MaterialAlertDialog">
+    <style name="DialogTitlePanel" parent="@style/MaterialAlertDialog.Material3Expressive.Title.Panel">
+        <item name="android:paddingBottom">@dimen/space_small_1</item>
+    </style>
+
+    <style name="MaterialAlertDialogThemeM3" parent="@style/ThemeOverlay.Material3Expressive.MaterialAlertDialog">
         <item name="buttonBarPositiveButtonStyle">@style/DialogFilledButton</item>
         <item name="buttonBarNegativeButtonStyle">@style/MaterialOutlinedButtonM3</item>
         <item name="buttonBarNeutralButtonStyle">@style/DialogTextButtonM3</item>
+        <item name="materialAlertDialogTitlePanelStyle">@style/DialogTitlePanel</item>
         <item name="materialAlertDialogTitleTextStyle">@style/MaterialAlertDialogTitleStyleM3</item>
         <item name="materialAlertDialogBodyTextStyle">@style/MaterialAlertDialogBodyStyle</item>
+        <!-- This padding is used as:
+             * dialog header's left/right padding.
+             * dialog content's default message (via setMessage) left/right padding, custom content
+               (via setView) needs to define its own left/right padding.
+             * dialog button bar's left/right padding.
+             Note: the dialog usually has 3 sections: header/body/actions bar, both header and
+             actions bar defines their own padding top/bottom, so body section usually doesn't need
+             to redefine padding top/bottom, the exception is that when a dialog doesn't have header
+             or actions bar, body needs to define proper padding top/bottom.
+         -->
+        <item name="dialogPreferredPadding">@dimen/dialog_content_padding_horizontal</item>
     </style>
 
     <style name="SearchChipItemStyle" parent="@style/Widget.Material3.Chip.Filter">
@@ -201,7 +222,7 @@
         <item name="android:background">?attr/colorSurfaceContainer</item>
         <item name="android:paddingHorizontal">@dimen/space_small_3</item>
         <item name="android:paddingTop">@dimen/space_extra_small_6</item>
-        <item name="android:paddingBottom">@dimen/space_small_1</item>
+        <item name="android:paddingBottom">@dimen/drawer_padding_bottom</item>
         <item name="android:scrollbarStyle">outsideOverlay</item>
         <item name="android:clipToPadding">false</item>
     </style>
@@ -221,8 +242,7 @@
         <item name="android:textAppearance">@style/NavRailItemTextAppearance</item>
     </style>
 
-    <style name="JobProgressPanelStyle" parent="@style/Widget.Material3.CardView.Elevated">
-        <item name="cardElevation">1dp</item>
+    <style name="JobProgressPanelStyle" parent="@style/Widget.Material3.CardView.Filled">
         <item name="cardBackgroundColor">?attr/colorSurfaceDim</item>
     </style>
 
@@ -239,11 +259,15 @@
         <item name="android:textAlignment">viewStart</item>
     </style>
 
-    <style name="JobProgressItemExpandButtonStyle" parent="@style/Widget.Material3.Button.IconButton.Filled">
-        <item name="android:insetBottom">0dp</item>
-        <item name="android:insetLeft">0dp</item>
-        <item name="android:insetRight">0dp</item>
-        <item name="android:insetTop">0dp</item>
+    <style name="JobProgressItemExpandButtonStyle" parent="@style/Widget.Material3Expressive.Button.IconButton.Filled">
+        <item name="android:insetBottom">16dp</item>
+        <item name="android:insetLeft">8dp</item>
+        <item name="android:insetRight">8dp</item>
+        <item name="android:insetTop">16dp</item>
+        <!-- Expressive version of IconButton's default minWidth is too wide, the following value
+             is copied from the style "Widget.Material3.Button.IconButton".
+        -->
+        <item name="android:minWidth">20dp</item>
         <item name="android:minHeight">0dp</item>
         <item name="android:paddingHorizontal">6dp</item>
         <item name="android:paddingVertical">1dp</item>
@@ -254,12 +278,12 @@
         <item name="shapeAppearance">@style/ShapeAppearance.Material3.Corner.Full</item>
     </style>
 
-    <style name="JobProgressItemActionButtonStyle" parent="@style/Widget.Material3.Button.TextButton">
+    <style name="JobProgressItemActionButtonStyle" parent="@style/Widget.Material3Expressive.Button.TextButton">
         <item name="android:minWidth">0dp</item>
         <item name="android:textAppearance">@style/JobProgressItemActionButtonText</item>
     </style>
 
-    <style name="JobProgressItemProgressStyle" parent="@style/Widget.Material3.LinearProgressIndicator">
+    <style name="JobProgressItemProgressStyle" parent="@style/Widget.Material3Expressive.LinearProgressIndicator">
         <item name="android:paddingTop">4dp</item>
         <item name="android:paddingBottom">4dp</item>
     </style>
@@ -269,5 +293,22 @@
         <item name="android:layout_marginBottom">4dp</item>
         <item name="strokeWidth">0dp</item>
         <item name="cardBackgroundColor">?attr/colorSurfaceContainerLow</item>
+    </style>
+
+    <style name="PickDialogAnimation">
+        <item name="android:activityOpenEnterAnimation">@anim/m3_motion_fade_enter</item>
+        <item name="android:activityCloseEnterAnimation">@anim/m3_motion_fade_exit</item>
+        <!--
+        This animates the previous activity to slide down.
+        For file picking intents, sharesheet is often opened first to allow the user to choose
+        camera or files. When the user chooses files, the sharesheet exit animation and picker
+        dialog enter animation happen at the same time but during the animation, the transparent
+        area of pick dialog uses the last rendered frame (i.e. the frame with sharesheet still
+        visible).
+        Playing an explicit exit animation for the previous activity fixes this issue. This has
+        no effect if sharesheet doesn't open first (i.e. DocsUI is immediately opened on top of
+        the trigger app).
+        -->
+        <item name="android:activityOpenExitAnimation">@anim/pick_dialog_prev_activity_exit</item>
     </style>
 </resources>

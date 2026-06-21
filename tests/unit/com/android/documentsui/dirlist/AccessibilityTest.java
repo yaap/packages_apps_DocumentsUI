@@ -23,11 +23,11 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import android.database.Cursor;
 import android.platform.test.annotations.EnableFlags;
 import android.view.View;
 import android.widget.Space;
 
+import androidx.annotation.Nullable;
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -37,6 +37,7 @@ import androidx.test.filters.SmallTest;
 
 import com.android.documentsui.R;
 import com.android.documentsui.TestConfigStore;
+import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.State;
 import com.android.documentsui.flags.Flags;
 import com.android.documentsui.rules.OverrideFlagsRule;
@@ -99,13 +100,16 @@ public class AccessibilityTest {
         List<RecyclerView.ViewHolder> holders = new ArrayList<>();
         TestConfigStore testConfigStore = new TestConfigStore();
         testConfigStore.enablePrivateSpaceInPhotoPicker();
-        holders.add(new MessageHolder(mView.getContext(), new Space(mView.getContext()),
-                testConfigStore) {
-            @Override
-            public void bind(Cursor cursor, String modelId) {
-
-            }
-        });
+        holders.add(
+                new MessageHolder(
+                        mView.getContext(), new Space(mView.getContext()), testConfigStore) {
+                    @Override
+                    public void bind(
+                            DocumentInfo doc,
+                            String modelId,
+                            @Nullable String summary,
+                            boolean justFinishedSync) {}
+                });
 
         mView.setHolders(holders);
 
@@ -121,13 +125,16 @@ public class AccessibilityTest {
         List<RecyclerView.ViewHolder> holders = new ArrayList<>();
         TestConfigStore testConfigStore = new TestConfigStore();
         testConfigStore.disablePrivateSpaceInPhotoPicker();
-        holders.add(new MessageHolder(mView.getContext(), new Space(mView.getContext()),
-                testConfigStore) {
-            @Override
-            public void bind(Cursor cursor, String modelId) {
-
-            }
-        });
+        holders.add(
+                new MessageHolder(
+                        mView.getContext(), new Space(mView.getContext()), testConfigStore) {
+                    @Override
+                    public void bind(
+                            DocumentInfo doc,
+                            String modelId,
+                            @Nullable String summary,
+                            boolean justFinishedSync) {}
+                });
 
         mView.setHolders(holders);
 

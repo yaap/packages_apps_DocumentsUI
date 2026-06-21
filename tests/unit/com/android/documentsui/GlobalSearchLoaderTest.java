@@ -21,6 +21,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertTrue;
 
+import android.content.Context;
 import android.database.Cursor;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
@@ -29,6 +30,7 @@ import android.provider.DocumentsContract.Document;
 import androidx.test.filters.MediumTest;
 
 import com.android.documentsui.base.DocumentInfo;
+import com.android.documentsui.base.RootInfo;
 import com.android.documentsui.base.State;
 import com.android.documentsui.sorting.SortDimension;
 import com.android.documentsui.sorting.SortModel;
@@ -133,6 +135,29 @@ public class GlobalSearchLoaderTest {
     }
 
     @Test
+    public void testLocalSearchRoot_isIgnored() {
+        // This test verifies that roots supporting local search are ignored by this loader,
+        // as local search is a V2 feature and GlobalSearchLoader is for V1 search.
+
+        // Create a mock RootInfo that is considered a local search root by overriding
+        // isLocalSearch to return true.
+        final RootInfo localSearchRoot = new RootInfo() {
+            @Override
+            public boolean isLocalSearch(Context context) {
+                return true;
+            }
+        };
+
+        // Set flags so it's not ignored by other preliminary checks in shouldIgnoreRoot.
+        // It must be a local-only root that supports search.
+        localSearchRoot.flags = DocumentsContract.Root.FLAG_LOCAL_ONLY
+                | DocumentsContract.Root.FLAG_SUPPORTS_SEARCH;
+
+        // Verify that the loader ignores this root.
+        assertTrue(mLoader.shouldIgnoreRoot(localSearchRoot));
+    }
+
+    @Test
     public void testCrossProfileRoot_notInTextSearch_beIgnored() {
         mEnv.state.supportsCrossProfile = true;
         mQueryArgs.remove(DocumentsContract.QUERY_ARG_DISPLAY_NAME);
@@ -176,11 +201,11 @@ public class GlobalSearchLoaderTest {
         mEnv.mockProviders.get(TestProvidersAccess.DOWNLOADS.authority)
                 .setNextChildDocumentsReturns(doc1, doc2);
 
-        assertEquals(false, mLoader.mState.showHiddenFiles);
+        assertEquals(false, mLoader.mState.shouldShowHiddenFiles());
         DirectoryResult result = mLoader.loadInBackground();
         assertEquals(0, result.getCursor().getCount());
 
-        mLoader.mState.showHiddenFiles = true;
+        mLoader.mState.setIsShowHiddenFiles(true);
         result = mLoader.loadInBackground();
         assertEquals(2, result.getCursor().getCount());
     }

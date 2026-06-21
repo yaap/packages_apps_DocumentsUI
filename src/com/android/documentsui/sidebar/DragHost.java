@@ -16,6 +16,9 @@
 
 package com.android.documentsui.sidebar;
 
+import static com.android.documentsui.util.FlagUtils.isDragsFromOtherAppsEnabled;
+import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
+
 import android.app.Activity;
 import android.util.Log;
 import android.view.View;
@@ -25,6 +28,7 @@ import com.android.documentsui.ActionHandler;
 import com.android.documentsui.DragAndDropManager;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.Lookup;
+import com.android.documentsui.base.SidebarEntryItemInfo;
 
 /**
  * Drag host for items in {@link RootsFragment}.
@@ -57,6 +61,9 @@ class DragHost extends AbstractDragHost {
 
     @Override
     public boolean canHandleDragEvent(View v) {
+        if (!isDragsFromOtherAppsEnabled() && !mDragAndDropManager.isDragFromSameApp()) {
+            return false;
+        }
         return v instanceof RootItemView;
     }
 
@@ -83,28 +90,37 @@ class DragHost extends AbstractDragHost {
         // If a read-only root, no need to see if top level is writable (it's not)
         if (!item.isDropTarget()) {
             mDragAndDropManager.updateStateToNotAllowed(v);
+
+            if (isUseMaterial3FlagEnabled()) {
+                // SpacerView doesn't have DragListener so this view is guaranteed to be a
+                // RootItemView.
+                RootItemView itemView = (RootItemView) v;
+                itemView.setError(true);
+            }
             return;
         }
 
-        final RootItem rootItem = (RootItem) item;
-        if (mDragAndDropManager.updateState(v, rootItem.root, null)
+        final BaseSidebarEntryItem sidebarItem = (BaseSidebarEntryItem) item;
+        if (mDragAndDropManager.updateState(v, sidebarItem.getItemInfo(), null)
                 == DragAndDropManager.STATE_UNKNOWN) {
-            mActions.getRootDocument(
-                    rootItem.root,
+            SidebarEntryItemInfo itemInfo = sidebarItem.getItemInfo();
+            mActions.getDocument(
+                    itemInfo.getRoot().authority,
+                    itemInfo.getDocumentId(),
+                    itemInfo.getRoot().userId,
                     DRAG_LOAD_TIME_OUT,
                     (DocumentInfo doc) -> {
-                        updateDropShadow(v, rootItem, doc);
+                        updateDropShadow(v, sidebarItem, doc);
                     });
         }
     }
 
-    private void updateDropShadow(
-            View v, RootItem rootItem, DocumentInfo rootDoc) {
-        if (rootDoc == null) {
-            Log.e(TAG, "Root DocumentInfo is null. Defaulting to unknown.");
+    private void updateDropShadow(View v, BaseSidebarEntryItem sidebarItem, DocumentInfo destDoc) {
+        if (destDoc == null) {
+            Log.e(TAG, "Destination DocumentInfo is null. Defaulting to unknown.");
         } else {
-            rootItem.docInfo = rootDoc;
-            mDragAndDropManager.updateState(v, rootItem.root, rootDoc);
+            sidebarItem.setDocInfo(destDoc);
+            mDragAndDropManager.updateState(v, sidebarItem.getItemInfo(), destDoc);
         }
     }
 }

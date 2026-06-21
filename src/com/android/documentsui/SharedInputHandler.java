@@ -16,9 +16,14 @@
 package com.android.documentsui;
 
 import static com.android.documentsui.base.SharedMinimal.DEBUG;
+import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 
+import android.app.Activity;
 import android.util.Log;
 import android.view.KeyEvent;
+import android.view.View;
+import android.view.Window;
+import android.widget.EditText;
 
 import androidx.recyclerview.selection.SelectionTracker;
 
@@ -34,29 +39,32 @@ public class SharedInputHandler {
 
     private static final String TAG = "SharedInputHandler";
 
+    private final Activity mActivity;
     private final FocusHandler mFocusManager;
     private final Procedure mSearchCanceler;
     private final Procedure mDirPopper;
-    private final Runnable mSearchExecutor;
+    private final Runnable mSearchKeyboardShortcutExecutor;
     private final Features mFeatures;
     private final SelectionTracker<String> mSelectionMgr;
     private final DrawerController mDrawer;
 
     public SharedInputHandler(
+            Activity activity,
             FocusHandler focusHandler,
             SelectionTracker<String> selectionMgr,
             Procedure searchCanceler,
             Procedure dirPopper,
             Features features,
             DrawerController drawer,
-            Runnable searchExcutor) {
+            Runnable searchKeyboardShortcutExecutor) {
+        mActivity = activity;
         mFocusManager = focusHandler;
         mSearchCanceler = searchCanceler;
         mSelectionMgr = selectionMgr;
         mDirPopper = dirPopper;
         mFeatures = features;
         mDrawer = drawer;
-        mSearchExecutor = searchExcutor;
+        mSearchKeyboardShortcutExecutor = searchKeyboardShortcutExecutor;
     }
 
     public boolean onKeyDown(int keyCode, KeyEvent event) {
@@ -71,13 +79,18 @@ public class SharedInputHandler {
 
             // This is the Android back button, not backspace.
             case KeyEvent.KEYCODE_BACK:
+                // isCanceled=true indicates the back press event is already consumed by the system,
+                // e.g. close the soft keyboard, our app level shouldn't do anything.
+                if (event.isCanceled()) {
+                    return true;
+                }
                 return onBack();
 
             case KeyEvent.KEYCODE_TAB:
                 return onTab();
 
             case KeyEvent.KEYCODE_SEARCH:
-                mSearchExecutor.run();
+                mSearchKeyboardShortcutExecutor.run();
                 return true;
 
             default:
@@ -108,6 +121,22 @@ public class SharedInputHandler {
     }
 
     private boolean onDelete() {
+        // An EditText (as used by the PickActivity's SaveFragment) will capture (its KeyEvent
+        // handler returns true) KeyEvent.KEYCODE_DEL events (hitting the backspace key) if the
+        // backspace deletes a character. But it will not capture (handler returns false) if the
+        // caret was at the start of the EditText (and so there is no "previous character" to
+        // delete). This includes when the EditText's contents are empty, but also happens for
+        // non-empty contents (if the caret is at the start).
+        //
+        // This onDelete method (via SharedInputHandler.onKeyDown) can therefore see a KEYCODE_DEL
+        // for which it would be surprising to run mDirPopper (navigating to the parent directory
+        // of the current one). To avoid that, return early if an EditText was focused.
+        Window window = (mActivity != null) ? mActivity.getWindow() : null;
+        View view = (window != null) ? window.getCurrentFocus() : null;
+        if ((view instanceof EditText) && isUseMaterial3FlagEnabled()) {
+            return true;
+        }
+
         mDirPopper.run();
         return true;
     }
@@ -136,6 +165,10 @@ public class SharedInputHandler {
     private boolean onEscape() {
         if (mSearchCanceler.run()) {
             return true;
+        }
+
+        if (isUseMaterial3FlagEnabled()) {
+            mFocusManager.clearFocus();
         }
 
         if (mSelectionMgr.hasSelection()) {

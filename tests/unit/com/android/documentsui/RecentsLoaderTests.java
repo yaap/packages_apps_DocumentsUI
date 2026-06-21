@@ -34,7 +34,6 @@ import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.State;
 import com.android.documentsui.base.UserId;
 import com.android.documentsui.testing.ActivityManagers;
-import com.android.documentsui.testing.TestCursor;
 import com.android.documentsui.testing.TestEnv;
 import com.android.documentsui.testing.TestFileTypeLookup;
 import com.android.documentsui.testing.TestImmediateExecutor;
@@ -140,11 +139,11 @@ public class RecentsLoaderTests {
         mEnv.mockProviders.get(TestProvidersAccess.HOME.authority)
                 .setNextRecentDocumentsReturns(doc1, doc2);
 
-        assertFalse(mLoader.mState.showHiddenFiles);
+        assertFalse(mLoader.mState.shouldShowHiddenFiles());
         DirectoryResult result = mLoader.loadInBackground();
         assertEquals(0, result.getCursor().getCount());
 
-        mLoader.mState.showHiddenFiles = true;
+        mLoader.mState.setIsShowHiddenFiles(true);
         result = mLoader.loadInBackground();
         assertEquals(2, result.getCursor().getCount());
     }
@@ -189,9 +188,7 @@ public class RecentsLoaderTests {
 
         mLoader.loadInBackground();
 
-        final TestCursor c = (TestCursor) mEnv.mockProviders.get(TestProvidersAccess.HOME.authority)
-                .queryRecentDocuments(null, null);
-        c.mockOnChange();
+        mEnv.mockProviders.get(TestProvidersAccess.HOME.authority).dispatchContentChanged();
 
         final boolean onContentChangedCallbackInvoked = latch.await(1, TimeUnit.SECONDS);
         assertTrue(onContentChangedCallbackInvoked);

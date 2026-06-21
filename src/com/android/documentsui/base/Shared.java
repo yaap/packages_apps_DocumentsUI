@@ -21,6 +21,7 @@ import static android.text.TextUtils.SAFE_STRING_FLAG_TRIM;
 
 import static com.android.documentsui.ChangeIds.RESTRICT_STORAGE_ACCESS_FRAMEWORK;
 import static com.android.documentsui.base.SharedMinimal.TAG;
+import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.app.Activity;
@@ -33,10 +34,11 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Configuration;
-import android.net.Uri;
+import android.icu.text.Collator;
+import android.icu.text.RuleBasedCollator;
+import android.icu.util.ULocale;
 import android.os.Looper;
 import android.os.Process;
-import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.text.format.DateUtils;
@@ -52,7 +54,6 @@ import com.android.documentsui.R;
 import com.android.documentsui.ui.MessageBuilder;
 import com.android.documentsui.util.VersionUtils;
 
-import java.text.Collator;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -72,12 +73,14 @@ public final class Shared {
     public static final String METADATA_KEY_AUDIO = "android.media.metadata.audio";
     public static final String METADATA_KEY_VIDEO = "android.media.metadata.video";
     public static final String METADATA_VIDEO_LATITUDE = "android.media.metadata.video:latitude";
-    public static final String METADATA_VIDEO_LONGITUTE = "android.media.metadata.video:longitude";
+    public static final String METADATA_VIDEO_LONGITUDE = "android.media.metadata.video:longitude";
 
     /**
      * Extra flag used to store the current stack so user opens in right spot.
      */
     public static final String EXTRA_STACK = "com.android.documentsui.STACK";
+
+    public static final String EXTRA_SELECTED_SHORTCUT = "com.android.documentsui.SELECTED_SHORCUT";
 
     /**
      * Extra flag used to store query of type String in the bundle.
@@ -103,6 +106,9 @@ public final class Shared {
      * Extra flag used to store document of DocumentInfo type in the bundle.
      */
     public static final String EXTRA_DOC = "document";
+
+    /** Extra flag used to store the summary of a document. */
+    public static final String EXTRA_SUMMARY = "com.android.documentsui.SUMMARY";
 
     /**
      * Extra flag used to store DirectoryFragment's selection of Selection type in the bundle.
@@ -144,11 +150,47 @@ public final class Shared {
      */
     public static final String LAUNCHER_TARGET_CLASS = "com.android.documentsui.LauncherActivity";
 
-    private static final Collator sCollator;
+    /**
+     * Monitor status of locale-sensitive collators.
+     */
+    private static volatile CollatorState sCollatorState;
 
-    static {
-        sCollator = Collator.getInstance();
-        sCollator.setStrength(Collator.SECONDARY);
+    private static final class CollatorState {
+        final ULocale mLocale;
+        final RuleBasedCollator mCollator;
+        final RuleBasedCollator mNumericCollator;
+
+        CollatorState(ULocale locale) {
+            mLocale = locale;
+            mCollator = (RuleBasedCollator) Collator.getInstance(locale);
+            mCollator.setStrength(Collator.SECONDARY);
+            mCollator.freeze();
+
+            mNumericCollator = mCollator.cloneAsThawed();
+            mNumericCollator.setNumericCollation(true);
+            mNumericCollator.freeze();
+        }
+    }
+
+    /**
+     * Returns a thread-safe, cached {@link CollatorState} instance for the current default locale.
+     *
+     * @return A non-null {@link CollatorState} for the current locale.
+     */
+    private static CollatorState getCollatorState() {
+        final ULocale locale = ULocale.getDefault();
+
+        // Update collators if locale has changed. Prevents unnecessary locking otherwise.
+        CollatorState collatorState = sCollatorState;
+        if (collatorState == null || !collatorState.mLocale.equals(locale)) {
+            synchronized (Shared.class) {
+                collatorState = sCollatorState;
+                if (collatorState == null || !collatorState.mLocale.equals(locale)) {
+                    sCollatorState = new CollatorState(locale);
+                }
+            }
+        }
+        return sCollatorState;
     }
 
     /**
@@ -213,11 +255,11 @@ public final class Shared {
     }
 
     /**
-     * Compare two strings against each other using system default collator in a
-     * case-insensitive mode. Clusters strings prefixed with {@link DIR_PREFIX}
-     * before other items.
+     * Compare two strings against each other using system default collator in a case-insensitive
+     * mode. Clusters strings prefixed with {@link DIR_PREFIX} before other items.
      */
     public static int compareToIgnoreCaseNullable(String lhs, String rhs) {
+        final CollatorState collatorState = getCollatorState();
         final boolean leftEmpty = TextUtils.isEmpty(lhs);
         final boolean rightEmpty = TextUtils.isEmpty(rhs);
 
@@ -225,19 +267,16 @@ public final class Shared {
         if (leftEmpty) return -1;
         if (rightEmpty) return 1;
 
-        return sCollator.compare(lhs, rhs);
-    }
-
-    private static boolean isSystemApp(ApplicationInfo ai) {
-        return (ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
-    }
-
-    private static boolean isUpdatedSystemApp(ApplicationInfo ai) {
-        return (ai.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0;
+        final RuleBasedCollator collator =
+                isUseMaterial3FlagEnabled()
+                        ? collatorState.mNumericCollator
+                        : collatorState.mCollator;
+        return collator.compare(lhs, rhs);
     }
 
     /**
      * Returns the calling package, possibly overridden by EXTRA_PACKAGE_NAME.
+     *
      * @param activity
      * @return
      */
@@ -247,9 +286,9 @@ public final class Shared {
         try {
             ApplicationInfo info =
                     activity.getPackageManager().getApplicationInfo(callingPackage, 0);
-            if (isSystemApp(info) || isUpdatedSystemApp(info)) {
-                final String extra = activity.getIntent().getStringExtra(
-                        Intent.EXTRA_PACKAGE_NAME);
+            if (activity.getIntent() != null
+                    && isTrustedSystemSignature(activity.getPackageManager(), info.uid)) {
+                final String extra = activity.getIntent().getStringExtra(Intent.EXTRA_PACKAGE_NAME);
                 if (extra != null && !TextUtils.isEmpty(extra)) {
                     callingPackage = extra;
                 }
@@ -261,6 +300,21 @@ public final class Shared {
             // For that reason, we ignore this exception.
         }
         return callingPackage;
+    }
+
+    /**
+     * Verifies if a package is signed with the device's platform certificate.
+     *
+     * @param pm PackageManager instance.
+     * @param callingUid The UID of the package to verify.
+     * @return {@code true} if the package matches the platform system signature.
+     */
+    private static boolean isTrustedSystemSignature(PackageManager pm, int callingUid) {
+        // Only allow name spoofing if the calling app is signed with the device's platform key
+        // (the same key used by the Android OS itself). Compare the caller's signature with
+        // the system UID (UID 1000), which represents the platform signature.
+        return pm.checkSignatures(callingUid, android.os.Process.SYSTEM_UID)
+                == PackageManager.SIGNATURE_MATCH;
     }
 
     /**
@@ -291,22 +345,6 @@ public final class Shared {
 
         return TextUtils.makeSafeForPresentation(
                 result.toString(), 500, 0, SAFE_STRING_FLAG_TRIM | SAFE_STRING_FLAG_SINGLE_LINE);
-    }
-
-    /**
-     * Returns the default directory to be presented after starting the activity.
-     * Method can be overridden if the change of the behavior of the the child activity is needed.
-     */
-    public static Uri getDefaultRootUri(Activity activity) {
-        Uri defaultUri = Uri.parse(activity.getResources().getString(R.string.default_root_uri));
-
-        if (!DocumentsContract.isRootUri(activity, defaultUri)) {
-            Log.e(TAG, "Default Root URI is not a valid root URI, falling back to Downloads.");
-            defaultUri = DocumentsContract.buildRootUri(Providers.AUTHORITY_DOWNLOADS,
-                    Providers.ROOT_ID_DOWNLOADS);
-        }
-
-        return defaultUri;
     }
 
     public static boolean isHardwareKeyboardAvailable(Context context) {

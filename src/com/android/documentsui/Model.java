@@ -19,6 +19,7 @@ package com.android.documentsui;
 import static com.android.documentsui.base.SharedMinimal.DEBUG;
 import static com.android.documentsui.base.SharedMinimal.VERBOSE;
 import static com.android.documentsui.util.FlagUtils.isSearchV2Enabled;
+import static com.android.documentsui.util.FlagUtils.isSyncStateEnabled;
 
 import android.app.AuthenticationRequiredException;
 import android.database.Cursor;
@@ -65,9 +66,16 @@ public class Model {
     /** Maps Model ID to cursor positions, for looking up items by Model ID. */
     private final Map<String, Integer> mPositions = new HashMap<>();
     private final Set<String> mFileNames = new HashSet<>();
+    private final Set<String> mSyncInProgressModelIds = new HashSet<>();
 
     private boolean mIsLoading;
+    private boolean mHasLimitedFunctionalityWhenOffline;
+
     private List<EventListener<Update>> mUpdateListeners = new ArrayList<>();
+
+    /** Used to update the summaries. */
+    private final ModelSummariesUpdate mSummariesUpdate = new ModelSummariesUpdate();
+
     private @Nullable Cursor mCursor;
     private int mCursorCount;
     private String mIds[] = new String[0];
@@ -97,6 +105,27 @@ public class Model {
         }
     }
 
+    /** Adds a summary update listener. */
+    public void addSummaryUpdateListener(SummaryUpdateListener listener) {
+        mSummariesUpdate.addSummaryUpdateListener(listener);
+    }
+
+    /** Removes a summary update listener. */
+    public void removeSummaryUpdateListener(SummaryUpdateListener listener) {
+        mSummariesUpdate.removeSummaryUpdateListener(listener);
+    }
+
+    /** Updates the summaries in the model. Delegates to ModelSummariesUpdate. */
+    public void updateSummaries(Map<String, String> summaries) {
+        // Pass the mPositions map to the updateSummaries method.
+        mSummariesUpdate.updateSummaries(summaries, mPositions);
+    }
+
+    /** Gets the summary for a given model ID. Delegates to ModelSummariesUpdate. */
+    public @Nullable String getSummary(String modelId) {
+        return mSummariesUpdate.getSummary(modelId);
+    }
+
     public void reset() {
         mCursor = null;
         mCursorCount = 0;
@@ -106,7 +135,9 @@ public class Model {
         error = null;
         doc = null;
         mIsLoading = false;
+        mHasLimitedFunctionalityWhenOffline = false;
         mFileNames.clear();
+        mSummariesUpdate.reset();
         notifyUpdateListeners();
     }
 
@@ -140,6 +171,12 @@ public class Model {
             }
         }
 
+        if (isSyncStateEnabled()) {
+            mSyncInProgressModelIds.clear();
+            mSyncInProgressModelIds.addAll(result.getSyncInProgressModelIds());
+            mHasLimitedFunctionalityWhenOffline = result.getHasLimitedFunctionalityWhenOffline();
+        }
+
         final Bundle extras = mCursor.getExtras();
         if (extras == null) {
             if (isSearchV2Enabled()) {
@@ -152,6 +189,19 @@ public class Model {
         }
 
         notifyUpdateListeners();
+    }
+
+    public Set<String> getSyncInProgressModelIds() {
+        return mSyncInProgressModelIds;
+    }
+
+    /**
+     * Whether the directory result is from querying a single root that has limited functionality
+     * when offline or is from querying multiple roots where at least one of them has limited
+     * functionality when offline and contains files.
+     */
+    public boolean hasLimitedFunctionalityWhenOffline() {
+        return mHasLimitedFunctionalityWhenOffline;
     }
 
     /**

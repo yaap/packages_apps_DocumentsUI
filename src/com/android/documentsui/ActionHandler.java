@@ -17,6 +17,7 @@
 package com.android.documentsui;
 
 import android.app.PendingIntent;
+import android.content.ComponentName;
 import android.content.ContentProvider;
 import android.content.Intent;
 import android.content.pm.ResolveInfo;
@@ -24,16 +25,23 @@ import android.net.Uri;
 import android.view.DragEvent;
 
 import androidx.annotation.IntDef;
+import androidx.lifecycle.LifecycleOwner;
 import androidx.recyclerview.selection.ItemDetailsLookup.ItemDetails;
 
+import com.android.documentsui.OperationDialogFragment.DialogType;
 import com.android.documentsui.base.BooleanConsumer;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.DocumentStack;
 import com.android.documentsui.base.RootInfo;
+import com.android.documentsui.base.ShortcutInfo;
+import com.android.documentsui.base.SidebarEntryItemInfo;
 import com.android.documentsui.base.UserId;
+import com.android.documentsui.dirlist.SummariesViewModel;
+import com.android.documentsui.services.JobProgress;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.Collection;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -57,6 +65,9 @@ public interface ActionHandler {
 
     void onActivityResult(int requestCode, int resultCode, Intent data);
 
+    /** Binds the ActionHandler to the SummariesViewModel and observes it for summary updates. */
+    void bindSummariesViewModel(LifecycleOwner owner, SummariesViewModel summariesViewModel);
+
     void openSettings(RootInfo root);
 
     /**
@@ -65,16 +76,28 @@ public interface ActionHandler {
     boolean dropOn(DragEvent event, RootInfo root);
 
     /**
+     * Drops documents on a shortcut sidebar entry.
+     */
+    boolean dropOn(DragEvent event, ShortcutInfo shortcut);
+
+    /**
+     * Gets the current selected user.
+     */
+    UserId getSelectedUser();
+
+    /**
      * Attempts to eject the identified root. Returns a boolean answer to listener.
      */
     void ejectRoot(RootInfo root, BooleanConsumer listener);
 
     /**
-     * Attempts to fetch the DocumentInfo for the supplied root. Returns the DocumentInfo to the
-     * callback. If the task times out, callback will be called with null DocumentInfo. Supply
-     * {@link TimeoutTask#DEFAULT_TIMEOUT} if you don't want to the task to ever time out.
+     * Attempts to fetch the DocumentInfo for the supplied authority, documentId and userId.
+     * Returns the DocumentInfo to the callback. If the task times out, callback will be called
+     * with null DocumentInfo. Supply {@link TimeoutTask#DEFAULT_TIMEOUT} if you don't want to the
+     * task to ever time out.
      */
-    void getRootDocument(RootInfo root, int timeout, Consumer<DocumentInfo> callback);
+    void getDocument(String authority, String documentId, UserId userId, int timeout,
+            Consumer<DocumentInfo> callback);
 
     /**
      * Attempts to refresh the given DocumentInfo, which should be at the top of the state stack.
@@ -95,6 +118,11 @@ public interface ActionHandler {
 
     void openRoot(RootInfo root);
 
+    /**
+     * Opens the contents of a shortcut (through a sidebar entry click).
+     */
+    void openShortcut(ShortcutInfo shortcut);
+
     void openRoot(ResolveInfo app, UserId userId);
 
     void loadRoot(Uri uri, UserId userId);
@@ -105,9 +133,13 @@ public interface ActionHandler {
 
     void openSelectedInNewWindow();
 
-    void openInNewWindow(DocumentStack path);
+    void openInNewWindow(DocumentStack path, ShortcutInfo shortcut);
 
-    void pasteIntoFolder(RootInfo root);
+    /**
+     * Pastes the selected items into a sidebar item entry.
+     * @param itemInfo - the destination sidebar item entry
+     */
+    void pasteIntoFolder(SidebarEntryItemInfo itemInfo);
 
     void selectAllFiles();
 
@@ -115,6 +147,9 @@ public interface ActionHandler {
      * Attempts to deselect all selected files.
      */
     void deselectAllFiles();
+
+    /** Toggles the focused item's selection. Does nothing if no item is focused. */
+    void toggleFocusedItemSelection();
 
     void showCreateDirectoryDialog();
 
@@ -171,7 +206,7 @@ public interface ActionHandler {
     /**
      * Trash the selected document(s)
      */
-    void trashSelectedDocuments(List<DocumentInfo> docs);
+    void trashSelectedDocuments();
 
     /**
      * Restore the selected document(s)
@@ -197,12 +232,24 @@ public interface ActionHandler {
     void setDebugMode(boolean enabled);
     void showDebugMessage();
 
+    /**
+     * Shows an alert dialog informing the user about the files that failed during a file operation.
+     */
+    void showFileOperationDetailsDialog(@DialogType int dialogType, JobProgress jobProgress);
+
     void showSortDialog();
 
     /**
      * Switch launch icon show/hide status.
      */
     void switchLauncherIcon();
+
+    /**
+     * Creates an intent to be sent to the approved app.
+     * @param app - The component name of an approved app to send the document(s) to..
+     * @return intent to be sent to the approved app.
+     */
+    @Nullable Intent createApprovedHandlerIntent(ComponentName app);
 
     /**
      * Shows a dialog to add file shortcut to launcher.
@@ -214,4 +261,33 @@ public interface ActionHandler {
      * @return this
      */
     <T extends ActionHandler> T reset(ContentLock contentLock);
+
+    /**
+     * Runs `LoadDocStackTask` to fetch the DocumentStack of the provided document.
+     * @param uri - The URI of the document
+     * @param userId - User ID of the current user
+     * @param callback - Callback sequence after the document stack task has finished executing
+     */
+    void loadDocument(Uri uri, UserId userId, LoadDocStackTask.LoadDocStackCallback callback);
+
+    /**
+     * Shows a confirmation dialog to the user before emptying the trash. This dialog should clarify
+     * that this action is irreversible and will permanently delete all items.
+     */
+    void showEmptyTrashConfirmationDialog();
+
+    /**
+     * Permanently deletes all documents that are currently in the trash. This action is typically
+     * triggered after the user confirms the action, for instance, via the dialog shown by {@link
+     * #showEmptyTrashConfirmationDialog()}.
+     */
+    void permanentlyDeleteTrashDocuments();
+
+    /**
+     * Retrieves the list of shortcuts for the given user and compares the shortcuts'
+     * URIs against the provided collection of URIs. If there is a match, the file operation
+     * should be blocked and a dialog should be shown to inform the user of this block.
+     * @return boolean value on whether or not the file operation should be blocked.
+     */
+    boolean blockOperationForShortcuts(Collection<Uri> uris, UserId userId);
 }

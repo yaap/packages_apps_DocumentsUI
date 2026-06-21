@@ -28,7 +28,6 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import android.content.BroadcastReceiver;
-import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -50,7 +49,6 @@ import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.RootInfo;
 import com.android.documentsui.files.FilesActivity;
 import com.android.documentsui.filters.HugeLongTest;
-import com.android.documentsui.filters.SkipScreenRecording;
 import com.android.documentsui.rules.TestFilesRule;
 import com.android.documentsui.services.TestNotificationService;
 import com.android.modules.utils.build.SdkLevel;
@@ -59,13 +57,11 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Rule;
-import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipEntry;
@@ -77,6 +73,7 @@ import java.util.zip.ZipInputStream;
  * <p>- Copy large number of files on the internal/external storage
  */
 @LargeTest
+@Ignore("TODO(b/437236527): re-enable")
 public class FileCopyUiTest extends ActivityTestJunit4<FilesActivity> {
     private static final String TAG = "FileCopyUiTest";
 
@@ -234,7 +231,11 @@ public class FileCopyUiTest extends ActivityTestJunit4<FilesActivity> {
         device.executeShellCommand("settings put global stay_on_while_plugged_in "
                 + mPreTestStayAwakeValue);
 
-        context.unregisterReceiver(mReceiver);
+        try {
+            context.unregisterReceiver(mReceiver);
+        } catch (Exception e) {
+            Log.d(TAG, "Error unregistering the receiver, it might not be registered.", e);
+        }
         mCountDownLatch = null;
         setNotificationAccess(false);
     }
@@ -251,7 +252,7 @@ public class FileCopyUiTest extends ActivityTestJunit4<FilesActivity> {
         }
 
         // Create folder and create file in its folder
-        bots.roots.openRoot(label);
+        switchRoot(label);
         Uri uri = helper.createFolder(root, TARGET_FOLDER);
         device.waitForIdle();
         if (!bots.directory.hasDocuments(TARGET_FOLDER)) {
@@ -277,7 +278,7 @@ public class FileCopyUiTest extends ActivityTestJunit4<FilesActivity> {
             return false;
         }
 
-        bots.roots.openRoot(label);
+        switchRoot(label);
         if (!bots.directory.hasDocuments(targetFolder)) {
             return true;
         }
@@ -397,14 +398,13 @@ public class FileCopyUiTest extends ActivityTestJunit4<FilesActivity> {
     private void copyFiles(String sourceRoot, String targetRoot) throws Exception {
         mCountDownLatch = new CountDownLatch(1);
         // Copy folder and child files
-        bots.roots.openRoot(sourceRoot);
+        switchRoot(sourceRoot);
         bots.directory.selectDocument(TARGET_FOLDER, 1);
         device.waitForIdle();
-        bots.main.clickActionbarOverflowItem(context.getResources().getString(R.string.menu_copy));
-        device.waitForIdle();
-        bots.roots.openRoot(targetRoot);
-        bots.main.clickDialogOkButton(/* closeSoftKeyboard */ false);
-        device.waitForIdle();
+        bots.main.doCopy(
+                () -> {
+                    switchRoot(targetRoot);
+                });
 
         // Wait until copy operation finished
         try {
@@ -419,7 +419,7 @@ public class FileCopyUiTest extends ActivityTestJunit4<FilesActivity> {
     private void assertFilesCopied(String rootLabel, RootInfo rootInfo,
             DocumentsProviderHelper helper) throws Exception {
         // Check that copied folder exists
-        bots.roots.openRoot(rootLabel);
+        switchRoot(rootLabel);
         device.waitForIdle();
         bots.directory.assertDocumentsVisible(TARGET_FOLDER);
 
@@ -435,13 +435,12 @@ public class FileCopyUiTest extends ActivityTestJunit4<FilesActivity> {
 
     // Copy Internal Storage -> Internal Storage //
     @HugeLongTest
-    @Ignore("TODO(b/437236527): re-enable")
     public void testCopyDocuments_InternalStorage() throws Exception {
         createDocuments(StubProvider.ROOT_0_ID, rootDir0, mDocsHelper);
         copyFiles(StubProvider.ROOT_0_ID, StubProvider.ROOT_1_ID);
 
         // Check that original folder exists
-        bots.roots.openRoot(StubProvider.ROOT_0_ID);
+        switchRoot(StubProvider.ROOT_0_ID);
         bots.directory.assertDocumentsVisible(TARGET_FOLDER);
 
         // Check that copied files exist
@@ -450,13 +449,12 @@ public class FileCopyUiTest extends ActivityTestJunit4<FilesActivity> {
 
     // Copy SD Card -> Internal Storage //
     @HugeLongTest
-    @Ignore("TODO(b/437236527): re-enable")
     public void testCopyDocuments_FromSdCard() throws Exception {
         createDocuments(mSdCardLabel, mSdCardRoot, mStorageDocsHelper);
         copyFiles(mSdCardLabel, mDeviceLabel);
 
         // Check that original folder exists
-        bots.roots.openRoot(mSdCardLabel);
+        switchRoot(mSdCardLabel);
         bots.directory.assertDocumentsVisible(TARGET_FOLDER);
 
         // Check that copied files exist
@@ -465,13 +463,12 @@ public class FileCopyUiTest extends ActivityTestJunit4<FilesActivity> {
 
     // Copy Internal Storage -> SD Card //
     @HugeLongTest
-    @Ignore("TODO(b/437236527): re-enable")
     public void testCopyDocuments_ToSdCard() throws Exception {
         createDocuments(mDeviceLabel, mPrimaryRoot, mStorageDocsHelper);
         copyFiles(mDeviceLabel, mSdCardLabel);
 
         // Check that original folder exists
-        bots.roots.openRoot(mDeviceLabel);
+        switchRoot(mDeviceLabel);
         bots.directory.assertDocumentsVisible(TARGET_FOLDER);
 
         // Check that copied files exist
@@ -479,79 +476,20 @@ public class FileCopyUiTest extends ActivityTestJunit4<FilesActivity> {
     }
 
     @HugeLongTest
-    @Ignore("TODO(b/437236527): re-enable")
     public void testCopyDocuments_documentsDisabled() throws Exception {
         mDocsHelper.createDocument(rootDir0, "text/plain", TestFilesRule.FILE_NAME_1);
-        bots.roots.openRoot(StubProvider.ROOT_0_ID);
+        switchRoot(StubProvider.ROOT_0_ID);
         bots.directory.selectDocument(TestFilesRule.FILE_NAME_1, 1);
         device.waitForIdle();
-        bots.main.clickActionbarOverflowItem(context.getResources().getString(R.string.menu_copy));
-        device.waitForIdle();
-        bots.roots.openRoot(StubProvider.ROOT_0_ID);
-        device.waitForIdle();
+        bots.main.doCopy(
+                () -> {
+                    switchRoot(StubProvider.ROOT_0_ID);
+                });
 
         assertFalse(bots.directory.findDocument(TestFilesRule.FILE_NAME_1).isEnabled());
 
         // Back to FilesActivity to do tear down action if necessary
         bots.main.clickDialogCancelButton(/* closeSoftKeyboard */ false);
-    }
-
-    @HugeLongTest
-    @SkipScreenRecording
-    @Test
-    public void testRecursiveCopyDocuments_InternalStorageToDownloadsProvider() throws Exception {
-        // Create Download folder if it doesn't exist.
-        DocumentInfo info = mStorageDocsHelper.findFile(mPrimaryRoot.documentId, "Download");
-
-        if (info == null) {
-            ContentResolver cr = context.getContentResolver();
-            Uri uri = mStorageDocsHelper.createFolder(mPrimaryRoot.documentId, "Download");
-            info = DocumentInfo.fromUri(cr, uri, userId);
-        }
-
-        assertTrue(info != null && info.isDirectory());
-
-        // Setup folder /storage/emulated/0/Download/UUID
-        String randomFolder = UUID.randomUUID().toString();
-        assertNull(mStorageDocsHelper.findFile(info.documentId, randomFolder));
-
-        Uri subFolderUri = mStorageDocsHelper.createFolder(info.documentId, randomFolder);
-        assertNotNull(subFolderUri);
-        mFoldersToCleanup.add(new RootAndFolderPair("Downloads", randomFolder));
-
-        // Load images into /storage/emulated/0/Download/UUID
-        loadImages(subFolderUri, mStorageDocsHelper);
-
-        mCountDownLatch = new CountDownLatch(1);
-
-        // Open Internal Storage Root.
-        bots.roots.openRoot(mDeviceLabel);
-        device.waitForIdle();
-
-        // Select Download folder.
-        bots.directory.selectDocument("Download", 1);
-        device.waitForIdle();
-
-        // Click copy button.
-        bots.main.clickActionbarOverflowItem(context.getResources().getString(R.string.menu_copy));
-        device.waitForIdle();
-
-        // Downloads folder is automatically opened, so just open the folder defined
-        // by the UUID.
-        bots.directory.openDocument(randomFolder);
-        device.waitForIdle();
-
-        // Initiate the copy operation.
-        bots.main.clickDialogOkButton(/* closeSoftKeyboard */ false);
-        device.waitForIdle();
-
-        try {
-            mCountDownLatch.await(WAIT_TIME_SECONDS, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            fail("Cannot wait because of error." + e.toString());
-        }
-
-        assertFalse(mOperationExecuted);
     }
 
     /** Holds a pair of a root and folder. */

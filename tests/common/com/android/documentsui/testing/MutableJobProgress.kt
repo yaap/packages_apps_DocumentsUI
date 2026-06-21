@@ -15,6 +15,8 @@
  */
 package com.android.documentsui.testing
 
+import android.net.Uri
+import com.android.documentsui.base.DocumentInfo
 import com.android.documentsui.base.DocumentStack
 import com.android.documentsui.services.FileOperationService
 import com.android.documentsui.services.Job
@@ -24,8 +26,12 @@ data class MutableJobProgress(
     var id: String,
     @FileOperationService.OpType val operationType: Int,
     @Job.State var state: Int,
-    var msg: String?,
+    var filename: String? = null,
+    var numFiles: Int,
     var hasFailures: Boolean,
+    val failedDocs: ArrayList<DocumentInfo> = ArrayList(),
+    val failedUris: ArrayList<Uri> = ArrayList(),
+    val failedPaths: ArrayList<String> = ArrayList(),
     var destination: DocumentStack? = null,
     var currentBytes: Long = -1,
     var requiredBytes: Long = -1,
@@ -36,11 +42,15 @@ data class MutableJobProgress(
             id,
             operationType,
             state,
-            msg,
+            filename,
+            numFiles,
             hasFailures,
+            failedDocs,
+            failedUris,
+            failedPaths,
             destination,
             currentBytes,
             requiredBytes,
-            msRemaining
+            msRemaining,
         )
 }

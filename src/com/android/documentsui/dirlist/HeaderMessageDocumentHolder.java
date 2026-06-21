@@ -20,15 +20,17 @@ import static com.android.documentsui.base.State.MODE_GRID;
 import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.content.Context;
-import android.database.Cursor;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import androidx.annotation.Nullable;
+
 import com.android.documentsui.ConfigStore;
 import com.android.documentsui.R;
+import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.State.ViewMode;
 
 /**
@@ -64,7 +66,7 @@ final class HeaderMessageDocumentHolder extends MessageHolder {
         mMessage = message;
         mDismissButton.setOnClickListener(this::onButtonClick);
         mActionButton.setOnClickListener(this::onButtonClick);
-        bind(null, null);
+        bind(null, null, null, false);
     }
 
     /**
@@ -87,7 +89,8 @@ final class HeaderMessageDocumentHolder extends MessageHolder {
     }
 
     @Override
-    public void bind(Cursor cursor, String modelId) {
+    public void bind(
+            DocumentInfo doc, String modelId, @Nullable String summary, boolean justFinishedSync) {
         if (mMessage.getTitleString() != null) {
             mTitle.setVisibility(View.VISIBLE);
             mSubtitle.setVisibility(View.VISIBLE);
@@ -101,7 +104,12 @@ final class HeaderMessageDocumentHolder extends MessageHolder {
             mTextView.setText(mMessage.getMessageString());
         }
 
-        mIcon.setImageDrawable(mMessage.getIcon());
+        if (mMessage.getIcon() != null) {
+            mIcon.setImageDrawable(mMessage.getIcon());
+            mIcon.setVisibility(View.VISIBLE);
+        } else {
+            mIcon.setVisibility(View.GONE);
+        }
 
         if (mMessage.shouldKeep()) {
             mActionView.setVisibility(View.VISIBLE);
@@ -109,12 +117,14 @@ final class HeaderMessageDocumentHolder extends MessageHolder {
             if (mMessage.getButtonString() != null) {
                 mActionButton.setText(mMessage.getButtonString());
             }
+            mActionButton.setEnabled(mMessage.isButtonEnabled());
         } else {
             mActionView.setVisibility(View.GONE);
             mDismissButton.setVisibility(View.VISIBLE);
             if (mMessage.getButtonString() != null) {
                 mDismissButton.setText(mMessage.getButtonString());
             }
+            mDismissButton.setEnabled(mMessage.isButtonEnabled());
         }
     }
 }

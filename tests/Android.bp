@@ -26,7 +26,9 @@ java_defaults {
     ],
 
     static_libs: [
-        "android.provider.flags-aconfig-java",
+        "android.provider.flags-aconfig-java-export",
+        "androidx.arch.core_core-testing",
+        "androidx.lifecycle_lifecycle-runtime-testing",
         "androidx.test.core",
         "androidx.test.espresso.contrib",
         "androidx.test.espresso.core",
@@ -38,10 +40,15 @@ java_defaults {
         "flag-junit",
         "guava",
         "kotlinx_coroutines_test",
+        "mockito-kotlin-nodeps",
+        "mockito-kotlin2",
         "mockito-target",
         "microbenchmark-device-lib",
         "platform-test-annotations",
     ],
+    lint: {
+        test: true,
+    },
 }
 
 android_library {
@@ -52,9 +59,10 @@ android_library {
         "functional/com/android/documentsui/ActivityTest.java",
     ],
     exclude_srcs: [
-        // TestRunner has a dependency on microbenchmark-device-lib. Since it's
-        // not used in this test target, we exclude instead of adding an
-        // unnecessary dependency.
+        // TestRunner/ArtifactSaverRunnerWithParameters have a dependency on
+        // microbenchmark-device-lib. Since it's not used in this test target,
+        // we exclude instead of adding an unnecessary dependency.
+        "common/com/android/documentsui/ArtifactSaverRunnerWithParameters.kt",
         "common/com/android/documentsui/TestRunner.kt",
     ],
     resource_dirs: [],
@@ -72,9 +80,13 @@ android_library {
         "androidx.test.rules",
         "androidx.test.uiautomator_uiautomator",
         "flag-junit",
+        "kotlinx_coroutines_test",
         "mockito-target",
         "ub-janktesthelper",
     ],
+    lint: {
+        baseline_filename: "lint-baseline.xml",
+    },
 }
 
 android_library {
@@ -100,6 +112,9 @@ android_library {
 
     min_sdk_version: "30",
     target_sdk_version: "33",
+    lint: {
+        baseline_filename: "lint-baseline-unit.xml",
+    },
 }
 
 android_library {
@@ -138,7 +153,6 @@ android_library {
     target_sdk_version: "33",
     lint: {
         baseline_filename: "lint-baseline.xml",
-        enabled: false,
     },
 }
 

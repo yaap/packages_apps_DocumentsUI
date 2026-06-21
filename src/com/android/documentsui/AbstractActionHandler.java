@@ -16,30 +16,40 @@
 
 package com.android.documentsui;
 
-import static com.android.documentsui.base.DocumentInfo.getCursorInt;
-import static com.android.documentsui.base.DocumentInfo.getCursorString;
+import static android.content.ContentResolver.wrap;
+
 import static com.android.documentsui.base.SharedMinimal.DEBUG;
 import static com.android.documentsui.util.FlagUtils.isDesktopFileHandlingFlagEnabled;
+import static com.android.documentsui.util.FlagUtils.isGetInfoDialogEnabled;
+import static com.android.documentsui.util.FlagUtils.isHomeScreenFilesFlagEnabled;
 import static com.android.documentsui.util.FlagUtils.isMovingContentIntoPrivateSpaceEnabled;
 import static com.android.documentsui.util.FlagUtils.isSearchV2Enabled;
+import static com.android.documentsui.util.FlagUtils.isTrashFlowEnabled;
+import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
+import static com.android.documentsui.util.FlagUtils.isUsePeekPreviewFlagEnabled;
 import static com.android.documentsui.util.FlagUtils.isZipNgFlagEnabled;
 
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
+import android.content.ContentProviderClient;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentSender;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
-import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
 import android.database.Cursor;
 import android.graphics.drawable.Icon;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.FileUtils;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Parcelable;
 import android.provider.DocumentsContract;
+import android.text.TextUtils;
 import android.util.Log;
 import android.util.Pair;
 import android.view.DragEvent;
@@ -47,49 +57,72 @@ import android.view.DragEvent;
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.fragment.app.FragmentActivity;
+import androidx.lifecycle.LifecycleOwner;
 import androidx.loader.app.LoaderManager.LoaderCallbacks;
 import androidx.loader.content.Loader;
 import androidx.recyclerview.selection.ItemDetailsLookup.ItemDetails;
 import androidx.recyclerview.selection.MutableSelection;
+import androidx.recyclerview.selection.Selection;
 import androidx.recyclerview.selection.SelectionTracker;
 
 import com.android.documentsui.AbstractActionHandler.CommonAddons;
 import com.android.documentsui.LoadDocStackTask.LoadDocStackCallback;
+import com.android.documentsui.OperationDialogFragment.DialogType;
 import com.android.documentsui.base.BooleanConsumer;
+import com.android.documentsui.base.DebugFlags;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.DocumentStack;
+import com.android.documentsui.base.LoadingHandler;
+import com.android.documentsui.base.LoadingHandlerImpl;
 import com.android.documentsui.base.Lookup;
 import com.android.documentsui.base.MimeTypes;
 import com.android.documentsui.base.Providers;
 import com.android.documentsui.base.RootInfo;
 import com.android.documentsui.base.Shared;
+import com.android.documentsui.base.ShortcutInfo;
+import com.android.documentsui.base.SidebarEntryItemInfo;
 import com.android.documentsui.base.State;
 import com.android.documentsui.base.UserId;
+import com.android.documentsui.clipping.ClipStore;
+import com.android.documentsui.clipping.UrisSupplier;
 import com.android.documentsui.dirlist.AnimationView;
 import com.android.documentsui.dirlist.AnimationView.AnimationType;
 import com.android.documentsui.dirlist.FocusHandler;
+import com.android.documentsui.dirlist.SummariesViewModel;
+import com.android.documentsui.dirlist.SummaryProviderManager;
 import com.android.documentsui.files.FilesActivity;
+import com.android.documentsui.files.DeleteDocumentFragment;
 import com.android.documentsui.files.LauncherActivity;
 import com.android.documentsui.files.QuickViewIntentBuilder;
+import com.android.documentsui.files.getinfo.GetInfoDialogFragment;
+import com.android.documentsui.inspector.InspectorActivity;
 import com.android.documentsui.loaders.FolderLoader;
+import com.android.documentsui.loaders.LoaderIds;
 import com.android.documentsui.loaders.QueryOptions;
 import com.android.documentsui.loaders.SearchLoader;
 import com.android.documentsui.loaders.TrashFileLoader;
+import com.android.documentsui.peek.PeekViewManager;
 import com.android.documentsui.queries.SearchViewManager;
-import com.android.documentsui.roots.GetRootDocumentTask;
+import com.android.documentsui.roots.GetDocumentTask;
 import com.android.documentsui.roots.LoadFirstRootTask;
 import com.android.documentsui.roots.LoadRootTask;
 import com.android.documentsui.roots.ProvidersAccess;
+import com.android.documentsui.services.FileOperation;
+import com.android.documentsui.services.FileOperationService;
+import com.android.documentsui.services.FileOperations;
+import com.android.documentsui.services.JobProgress;
 import com.android.documentsui.sidebar.EjectRootTask;
 import com.android.documentsui.sorting.SortListFragment;
 import com.android.documentsui.ui.DialogController;
 import com.android.documentsui.ui.Snackbars;
+import com.android.documentsui.util.FlagUtils;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -108,12 +141,13 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
     @VisibleForTesting
     public static final int CODE_AUTHENTICATION = 43;
 
-    @VisibleForTesting
-    static final int LOADER_ID = 42;
-
     private static final String TAG = "AbstractActionHandler";
     private static final int REFRESH_SPINNER_TIMEOUT = 500;
+    private static final int LOADING_DELAY = 200;
     private final Semaphore mLoaderSemaphore = new Semaphore(1);
+    private final @Nullable LoadingHandler mHandler;
+    private final @NonNull Runnable mShowLoadingRunnable;
+    private final @Nullable PeekViewManager mPeekViewManager;
 
     protected final T mActivity;
     protected final State mState;
@@ -126,12 +160,17 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
     protected final DialogController mDialogs;
     protected final Model mModel;
     protected final Injector<?> mInjector;
+    protected @Nullable SummariesViewModel mSummariesViewModel;
+    protected final ActionModeAddons mActionModeAddons;
+    protected final Runnable mCloseSelectionBar;
+    protected final ClipStore mClipStore;
 
     private final LoaderBindings mBindings;
 
     private Runnable mDisplayStateChangedListener;
 
     private ContentLock mContentLock;
+    protected Uri mToSelect;
 
     @Override
     public void registerDisplayStateChangedListener(Runnable l) {
@@ -152,7 +191,72 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
             DocumentsAccess docs,
             SearchViewManager searchMgr,
             Lookup<String, Executor> executors,
-            Injector<?> injector) {
+            Injector<?> injector,
+            @Nullable PeekViewManager peekViewManager,
+            @Nullable ActionModeAddons actionModeAddons,
+            Runnable closeSelectionBar,
+            ClipStore clipStore) {
+        this(
+                activity,
+                state,
+                providers,
+                docs,
+                searchMgr,
+                executors,
+                injector,
+                peekViewManager,
+                actionModeAddons,
+                closeSelectionBar,
+                clipStore,
+                new LoadingHandlerImpl(new Handler(Looper.getMainLooper())));
+    }
+
+    protected AbstractActionHandler(
+            T activity,
+            State state,
+            ProvidersAccess providers,
+            DocumentsAccess docs,
+            SearchViewManager searchMgr,
+            Lookup<String, Executor> executors,
+            Injector<?> injector,
+            @Nullable PeekViewManager peekViewManager,
+            @Nullable ActionModeAddons actionModeAddons,
+            Runnable closeSelectionBar,
+            ClipStore clipStore,
+            LoadingHandler handler) {
+        this(
+                activity,
+                state,
+                providers,
+                docs,
+                searchMgr,
+                executors,
+                injector,
+                peekViewManager,
+                actionModeAddons,
+                closeSelectionBar,
+                clipStore,
+                handler,
+                injector.focusManager,
+                injector.selectionMgr);
+    }
+
+    @VisibleForTesting
+    protected AbstractActionHandler(
+            T activity,
+            State state,
+            ProvidersAccess providers,
+            DocumentsAccess docs,
+            SearchViewManager searchMgr,
+            Lookup<String, Executor> executors,
+            Injector<?> injector,
+            @Nullable PeekViewManager peekViewManager,
+            @Nullable ActionModeAddons actionModeAddons,
+            Runnable closeSelectionBar,
+            ClipStore clipStore,
+            LoadingHandler handler,
+            FocusHandler focusHandler,
+            SelectionTracker<String> selectionMgr) {
 
         assert (activity != null);
         assert (state != null);
@@ -165,15 +269,28 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
         mState = state;
         mProviders = providers;
         mDocs = docs;
-        mFocusHandler = injector.focusManager;
-        mSelectionMgr = injector.selectionMgr;
+        mFocusHandler = focusHandler;
+        mSelectionMgr = selectionMgr;
         mSearchMgr = searchMgr;
         mExecutors = executors;
         mDialogs = injector.dialogs;
         mModel = injector.getModel();
         mInjector = injector;
+        mPeekViewManager = peekViewManager;
+        mActionModeAddons = actionModeAddons;
+        mCloseSelectionBar = closeSelectionBar;
+        mClipStore = clipStore;
+        mHandler = handler;
 
         mBindings = new LoaderBindings();
+        mShowLoadingRunnable = () -> mModel.setLoading(true);
+    }
+
+    @Override
+    public void bindSummariesViewModel(
+            LifecycleOwner owner, SummariesViewModel summariesViewModel) {
+        mSummariesViewModel = summariesViewModel;
+        mSummariesViewModel.getSummariesLiveData().observe(owner, this::onSummariesLoaded);
     }
 
     @Override
@@ -183,6 +300,11 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
                 root.authority,
                 root.rootId,
                 listener).executeOnExecutor(ProviderExecutor.forAuthority(root.authority));
+    }
+
+    @Override
+    public UserId getSelectedUser() {
+        return mActivity.getSelectedUser();
     }
 
     @Override
@@ -219,15 +341,18 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
     }
 
     @Override
-    public void getRootDocument(RootInfo root, int timeout, Consumer<DocumentInfo> callback) {
-        GetRootDocumentTask task = new GetRootDocumentTask(
-                root,
+    public void getDocument(String authority, String documentId, UserId userId, int timeout,
+            Consumer<DocumentInfo> callback) {
+        GetDocumentTask task = new GetDocumentTask(
+                authority,
+                documentId,
+                userId,
                 mActivity,
                 timeout,
                 mDocs,
                 callback);
 
-        task.executeOnExecutor(mExecutors.lookup(root.authority));
+        task.executeOnExecutor(mExecutors.lookup(authority));
     }
 
     @Override
@@ -249,11 +374,14 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
     }
 
     @Override
-    public void openInNewWindow(DocumentStack path) {
+    public void openInNewWindow(DocumentStack path, ShortcutInfo shortcut) {
         Metrics.logUserAction(MetricConsts.USER_ACTION_NEW_WINDOW);
 
         Intent intent = LauncherActivity.createLaunchIntent(mActivity);
         intent.putExtra(Shared.EXTRA_STACK, (Parcelable) path);
+        if (isHomeScreenFilesFlagEnabled()) {
+            intent.putExtra(Shared.EXTRA_SELECTED_SHORTCUT, (Parcelable) shortcut);
+        }
 
         // Multi-window necessitates we pick how we are launched.
         // By default we'd be launched in-place above the existing app.
@@ -275,9 +403,67 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
         throw new UnsupportedOperationException("Open doc not supported!");
     }
 
+    /** Shows a dialog with the metadata of the selected document. */
+    private void showGetInfoDialog(DocumentInfo doc) {
+        String summary = null;
+        if (mSummariesViewModel != null) {
+            SummaryProviderManager summaryProviderManager = mInjector.getSummaryProviderManager();
+            if (summaryProviderManager != null && summaryProviderManager.isEnabled()) {
+                String modelId = ModelId.build(doc.userId, doc.authority, doc.documentId);
+                summary = mSummariesViewModel.getSummaries().getValue().get(modelId);
+            }
+        }
+
+        GetInfoDialogFragment.show(
+                mActivity.getSupportFragmentManager(),
+                doc,
+                mInjector.features.isDebugSupportEnabled()
+                        && (DEBUG || DebugFlags.getDocumentDetailsEnabled()),
+                summary);
+    }
+
+    private void showInspector(DocumentInfo doc) {
+        Metrics.logUserAction(MetricConsts.USER_ACTION_INSPECTOR);
+        Intent intent = InspectorActivity.createIntent(mActivity, doc.derivedUri, doc.userId);
+
+        // permit the display of debug info about the file.
+        intent.putExtra(
+                Shared.EXTRA_SHOW_DEBUG,
+                mInjector.features.isDebugSupportEnabled()
+                        && (DEBUG || DebugFlags.getDocumentDetailsEnabled()));
+
+        // The "root document" (top level folder in a root) don't usually have a
+        // human friendly display name. That's because we've never shown the root
+        // folder's name to anyone.
+        // For that reason when the doc being inspected is the root folder,
+        // we override the displayName of the doc w/ the Root's name instead.
+        // The Root's name is shown to the user in the sidebar.
+        if (doc.isDirectory() && mState.stack.size() == 1 && mState.stack.get(0).equals(doc)) {
+            RootInfo root = mActivity.getCurrentRoot();
+            // Recents root title isn't defined, but inspector is disabled for recents root folder.
+            assert !TextUtils.isEmpty(root.title);
+            intent.putExtra(Intent.EXTRA_TITLE, root.title);
+        }
+        mActivity.startActivity(intent);
+    }
+
+    private void showPeek(DocumentInfo doc) {
+        if (mPeekViewManager == null) {
+            Log.e(TAG, "Attempting to show Peek when PeekViewManager is not defined");
+            return;
+        }
+        mPeekViewManager.peekDocument(doc);
+    }
+
     @Override
     public void showPreview(DocumentInfo doc) {
-        throw new UnsupportedOperationException("Can't open properties.");
+        if (isUsePeekPreviewFlagEnabled()) {
+            showPeek(doc);
+        } else if (isGetInfoDialogEnabled()) {
+            showGetInfoDialog(doc);
+        } else {
+            showInspector(doc);
+        }
     }
 
     @Override
@@ -304,6 +490,11 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
     }
 
     @Override
+    public void openShortcut(ShortcutInfo shortcut) {
+        throw new UnsupportedOperationException("Can't open shortcut.");
+    }
+
+    @Override
     public void showAppDetails(ResolveInfo info, UserId userId) {
         throw new UnsupportedOperationException("Can't show app details.");
     }
@@ -314,7 +505,12 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
     }
 
     @Override
-    public void pasteIntoFolder(RootInfo root) {
+    public boolean dropOn(DragEvent event, ShortcutInfo shortcut) {
+        throw new UnsupportedOperationException("Can't drop on a shortcut");
+    }
+
+    @Override
+    public void pasteIntoFolder(SidebarEntryItemInfo itemInfo) {
         throw new UnsupportedOperationException("Can't paste into folder.");
     }
 
@@ -336,17 +532,17 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
                 Log.w(TAG, "Skipping selection. Can't obtain cursor for modeId: " + id);
                 continue;
             }
-            String docMimeType = getCursorString(
-                    cursor, DocumentsContract.Document.COLUMN_MIME_TYPE);
-            int docFlags = getCursorInt(cursor, DocumentsContract.Document.COLUMN_FLAGS);
-            if (mInjector.config.isDocumentEnabled(docMimeType, docFlags, mState)) {
+            if (mInjector.config.isDocumentEnabled(
+                    DocumentInfo.fromDirectoryCursor(cursor),
+                    mState,
+                    mInjector.networkMonitor.isOnline())) {
                 enabled.add(id);
             }
         }
 
         // Only select things currently visible in the adapter.
         boolean changed = mSelectionMgr.setItemsSelected(enabled, true);
-        if (changed) {
+        if (changed && mDisplayStateChangedListener != null) {
             mDisplayStateChangedListener.run();
         }
     }
@@ -357,10 +553,29 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
     }
 
     @Override
+    public void toggleFocusedItemSelection() {
+        final String id = mFocusHandler.getFocusModelId();
+        if (id != null) {
+            if (mSelectionMgr.isSelected(id)) {
+                mSelectionMgr.deselect(id);
+            } else {
+                mSelectionMgr.select(id);
+            }
+        }
+    }
+
+    @Override
     public void showCreateDirectoryDialog() {
         Metrics.logUserAction(MetricConsts.USER_ACTION_CREATE_DIR);
 
         CreateDirectoryFragment.show(mActivity.getSupportFragmentManager());
+    }
+
+    @Override
+    public void showFileOperationDetailsDialog(
+            @DialogType int dialogType, JobProgress jobProgress) {
+        OperationDialogFragment.show(
+                mActivity.getSupportFragmentManager(), dialogType, jobProgress);
     }
 
     @Override
@@ -369,9 +584,30 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
     }
 
     @Override
-    @Nullable
-    public DocumentInfo renameDocument(String name, DocumentInfo document) {
-        throw new UnsupportedOperationException("Can't rename documents.");
+    public @Nullable DocumentInfo renameDocument(String name, DocumentInfo document) {
+        if (isHomeScreenFilesFlagEnabled()
+                && blockOperationForShortcuts(List.of(document.derivedUri), document.userId)) {
+            // This should have been blocked earlier before the popup appears, but leave here
+            // just in case.
+            Log.e(TAG, "Failed to rename because a protected folder is selected.");
+            return null;
+        }
+
+        ContentResolver resolver = document.userId.getContentResolver(mActivity);
+        ContentProviderClient client = null;
+
+        try {
+            client =
+                    DocumentsApplication.acquireUnstableProviderOrThrow(
+                            resolver, document.derivedUri.getAuthority());
+            Uri newUri = DocumentsContract.renameDocument(wrap(client), document.derivedUri, name);
+            return DocumentInfo.fromUri(resolver, newUri, document.userId);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to rename file", e);
+            return null;
+        } finally {
+            FileUtils.closeQuietly(client);
+        }
     }
 
     @Override
@@ -403,6 +639,16 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
         } else {
             openChildContainer(doc);
         }
+    }
+
+    @Override
+    public void showEmptyTrashConfirmationDialog() {
+        throw new UnsupportedOperationException("Empty trash not supported!");
+    }
+
+    @Override
+    public void permanentlyDeleteTrashDocuments() {
+        throw new UnsupportedOperationException("Empty trash not supported!");
     }
 
     // TODO: Make this private and make tests call interface method instead.
@@ -668,15 +914,25 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
             currentDoc = mDocs.getArchiveDocument(doc.derivedUri, doc.userId);
         }
 
-        assert (currentDoc != null);
-        if (currentDoc.equals(mState.stack.peek())) {
-            Log.w(TAG, "This DocumentInfo is already in current DocumentsStack");
-            return;
+        assert currentDoc != null;
+
+        if (isUseMaterial3FlagEnabled()) {
+            if (mState.stack.popTo(currentDoc.derivedUri)) {
+                currentDoc = mState.stack.peek();
+            } else {
+                mState.stack.push(currentDoc);
+            }
+            mActivity.notifyDirectoryNavigated(currentDoc.derivedUri);
+        } else {
+            if (currentDoc.equals(mState.stack.peek())) {
+                Log.w(TAG, "This DocumentInfo is already in current DocumentsStack");
+                return;
+            }
+
+            mActivity.notifyDirectoryNavigated(currentDoc.derivedUri);
+            mState.stack.push(currentDoc);
         }
 
-        mActivity.notifyDirectoryNavigated(currentDoc.derivedUri);
-
-        mState.stack.push(currentDoc);
         // Show an opening animation only if pressing "back" would get us back to the
         // previous directory. Especially after opening a root document, pressing
         // back, wouldn't go to the previous root, but close the activity.
@@ -740,7 +996,8 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
         Icon launcherIcon =
                 Icon.createWithResource(mActivity, IconUtils.getIconResId(document.mimeType));
         String title = document.displayName;
-        ShortcutInfo shortcutInfo = new ShortcutInfo.Builder(mActivity, title)
+        android.content.pm.ShortcutInfo shortcutInfo =
+                new android.content.pm.ShortcutInfo.Builder(mActivity, title)
                 .setShortLabel(title)
                 .setIcon(launcherIcon)
                 .setIntent(intent)
@@ -759,13 +1016,124 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
     }
 
     @Override
-    public void showDeleteDialog() {
-        throw new UnsupportedOperationException("Delete not supported!");
+    public Intent createApprovedHandlerIntent(ComponentName handler) {
+        throw new UnsupportedOperationException("createApprovedHandlerIntent not supported!");
+    }
+
+    public Selection<String> getSelectedOrFocused() {
+        final MutableSelection<String> selection = this.getStableSelection();
+        if (selection.isEmpty()) {
+            String focusModelId = mFocusHandler.getFocusModelId();
+            if (focusModelId != null) {
+                selection.add(focusModelId);
+            }
+        }
+
+        return selection;
+    }
+
+    /**
+     * If an item is currently focused, then returns it, else returns the items that are currently
+     * selected.
+     */
+    public Selection<String> getFocusedOrSelected() {
+        final MutableSelection<String> selection = new MutableSelection<>();
+        final String focused = mFocusHandler.getFocusModelId();
+        if (focused != null) {
+            selection.add(focused);
+        } else {
+            mSelectionMgr.copySelection(selection);
+        }
+        return selection;
     }
 
     @Override
-    public void deleteSelectedDocuments(List<DocumentInfo> docs, DocumentInfo srcParent) {
-        throw new UnsupportedOperationException("Delete not supported!");
+    public void showDeleteDialog() {
+        Selection selection = getSelectedOrFocused();
+        if (selection.isEmpty()) {
+            return;
+        }
+
+        // The DocumentInfo of the parent of the document(s) to be deleted is used to send the URI
+        // of that parent to FileOperationService for the DeleteJob. If specified, DeleteJob will
+        // try to remove the document from the parent rather than deleting the document, this
+        // distinction is important if the DocumentProvider supports the document appearing under
+        // multiple parents.
+        //
+        // When viewing the "Recent" root, it is considered the parent, however it's a synthetic
+        // root and not the actual parent of the documents. Its URI, when passed to
+        // FileOperationService, is meaningless and causes DeleteJob to unnecessarily fail for
+        // documents in Recents.
+        //
+        // If the user is in the "Recent" view, pass a null DocumentInfo as parent, causing a null
+        // parentUri to be specified for DeleteJob.
+        DocumentInfo parentDocumentInfo = mState.stack.peek();
+        if (isSearchV2Enabled() && mState.stack.isRecents()) {
+            parentDocumentInfo = null;
+        }
+
+        // The document in trash folder can not be removed from the parent, since it will be
+        // permanently deleted. Pass a null parent so that DeleteJob can do a permanent delete.
+        if (isTrashFlowEnabled() && mState.stack.isTrashTopLevel()) {
+            parentDocumentInfo = null;
+        }
+
+        DeleteDocumentFragment.show(
+                mActivity.getSupportFragmentManager(),
+                mModel.getDocuments(selection),
+                parentDocumentInfo,
+                mState.stack.isTrashRoot());
+    }
+
+    @Override
+    public void deleteSelectedDocuments(List<DocumentInfo> docs, @Nullable DocumentInfo srcParent) {
+        if (docs == null || docs.isEmpty()) {
+            return;
+        }
+
+        if (isUseMaterial3FlagEnabled()) {
+            mCloseSelectionBar.run();
+        } else {
+            mActionModeAddons.finishActionMode();
+        }
+
+        List<Uri> uris = new ArrayList<>(docs.size());
+        for (DocumentInfo doc : docs) {
+            uris.add(doc.derivedUri);
+        }
+
+        if (isHomeScreenFilesFlagEnabled()
+                && blockOperationForShortcuts(uris, mActivity.getSelectedUser())) {
+            Log.e(TAG, "Failed to delete because a protected folder is selected.");
+            return;
+        }
+
+        UrisSupplier srcs;
+        try {
+            srcs = UrisSupplier.create(uris, mClipStore);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to delete a file because we were unable to get item URIs.", e);
+            mDialogs.showFileOperationStatus(
+                    FileOperations.Callback.STATUS_FAILED,
+                    FileOperationService.OPERATION_DELETE,
+                    uris.size());
+            return;
+        }
+
+        // srcParent can be null, such as when the user is viewing the "Recent" root.
+        FileOperation operation =
+                new FileOperation.Builder()
+                        .withOpType(FileOperationService.OPERATION_DELETE)
+                        .withDestination(mState.stack)
+                        .withSrcs(srcs)
+                        .withSrcParent(srcParent == null ? null : srcParent.derivedUri)
+                        .build();
+
+        FileOperations.start(
+                mActivity,
+                operation,
+                mDialogs::showFileOperationStatus,
+                FileOperations.createJobId());
     }
 
     @Override
@@ -774,7 +1142,25 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
     }
 
     @Override
-    public void trashSelectedDocuments(List<DocumentInfo> docs) {
+    public boolean blockOperationForShortcuts(Collection<Uri> uris, UserId userId) {
+        Collection<ShortcutInfo> shortcuts = mProviders.getShortcutsForUser(userId);
+        if (shortcuts == null) {
+            return false;
+        }
+        for (ShortcutInfo shortcut : shortcuts) {
+            // Prevent special folders (i.e. system-defined shortcuts) from getting deleted.
+            for (Uri uri : uris) {
+                if (uri.equals(shortcut.getUri())) {
+                    mDialogs.showOperationNotAllowedForShortcuts();
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public void trashSelectedDocuments() {
         throw new UnsupportedOperationException("Trash document not supported!");
     }
 
@@ -783,7 +1169,8 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
         throw new UnsupportedOperationException("Restore document not supported!");
     }
 
-    protected final void loadDocument(Uri uri, UserId userId, LoadDocStackCallback callback) {
+    @Override
+    public final void loadDocument(Uri uri, UserId userId, LoadDocStackCallback callback) {
         new LoadDocStackTask(
                 mActivity,
                 mProviders,
@@ -795,6 +1182,14 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
 
     @Override
     public final void loadRoot(Uri uri, UserId userId) {
+        if (Providers.isRecentsRootUri(uri)) {
+            loadRecent();
+            return;
+        }
+        if (DocumentsContract.isDocumentUri(mActivity, uri)) {
+            launchToDocument(uri);
+            return;
+        }
         new LoadRootTask<>(mActivity, mProviders, uri, userId, this::onRootLoaded)
                 .executeOnExecutor(mExecutors.lookup(uri.getAuthority()));
     }
@@ -844,13 +1239,18 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
         // cross-profile scenario.
         // For RecentsLoader and GlobalSearchLoader, they do not require rootDoc so it is no-op.
         // For DirectoryLoader, the loader needs to handle the case when stack.peek() returns null.
-
-        // Only allow restartLoader when the previous loader is finished or reset. Allowing
-        // multiple consecutive calls to restartLoader() / onCreateLoader() will probably create
-        // multiple active loaders, because restartLoader() does not interrupt previous loaders'
-        // loading, therefore may block the UI thread and cause ANR.
-        if (mLoaderSemaphore.tryAcquire()) {
-            mActivity.getSupportLoaderManager().restartLoader(LOADER_ID, null, mBindings);
+        if (isSearchV2Enabled()) {
+            mHandler.removeCallbacks(mShowLoadingRunnable);
+            mHandler.postDelayed(mShowLoadingRunnable, LOADING_DELAY);
+            mActivity.getSupportLoaderManager().restartLoader(LoaderIds.MAIN, null, mBindings);
+        } else {
+            // Only allow restartLoader when the previous loader is finished or reset. Allowing
+            // multiple consecutive calls to restartLoader() / onCreateLoader() will probably create
+            // multiple active loaders, because restartLoader() does not interrupt previous loaders'
+            // loading, therefore may block the UI thread and cause ANR.
+            if (mLoaderSemaphore.tryAcquire()) {
+                mActivity.getSupportLoaderManager().restartLoader(LoaderIds.MAIN, null, mBindings);
+            }
         }
     }
 
@@ -955,8 +1355,35 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
     }
 
     protected final void loadHomeDir() {
-        loadRoot(Shared.getDefaultRootUri(mActivity), UserId.DEFAULT_USER);
+        Uri defaultUri = getDefaultRootUri(mState.action);
+        loadRoot(defaultUri, UserId.DEFAULT_USER);
     }
+
+    /**
+     * Returns the default directory to be presented after starting the activity. It will attempt to
+     * use the default root uri from the resources first and will return a fallback URI based on the
+     * activity type if the default root uri is unsuccessful.
+     */
+    @VisibleForTesting
+    public Uri getDefaultRootUri(@State.ActionType int action) {
+        Uri defaultUri = Uri.parse(mActivity.getResources().getString(R.string.default_root_uri));
+        // These pick actions require the root to allow creation, but Recents doesn't support it.
+        boolean requiresCreate =
+                action == State.ACTION_CREATE || action == State.ACTION_PICK_COPY_DESTINATION;
+        if (FlagUtils.isHomeScreenFilesFlagEnabled()
+                && FlagUtils.isUseAllfilesRootForRecentsEnabled()
+                && Providers.isRecentsRootUri(defaultUri)
+                && !requiresCreate) {
+            return defaultUri;
+        }
+
+        if (!DocumentsContract.isRootUri(mActivity, defaultUri)) {
+            defaultUri = getDefaultFallbackUri();
+        }
+        return defaultUri;
+    }
+
+    protected abstract Uri getDefaultFallbackUri();
 
     protected final void loadRecent() {
         mState.stack.changeRoot(mProviders.getRecentsRoot(UserId.DEFAULT_USER));
@@ -972,14 +1399,17 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
     @Override
     public ActionHandler reset(ContentLock reloadLock) {
         mContentLock = reloadLock;
-        mActivity.getLoaderManager().destroyLoader(LOADER_ID);
+        if (isSearchV2Enabled()) {
+            mHandler.removeCallbacks(mShowLoadingRunnable);
+        }
+        mActivity.getLoaderManager().destroyLoader(LoaderIds.MAIN);
         return this;
     }
 
     private final class LoaderBindings implements LoaderCallbacks<DirectoryResult> {
 
         private ExecutorService mExecutorService = null;
-        private static final long MAX_SEARCH_TIME_MS = 3000;
+        private static final long MAX_SEARCH_TIME_MS = 500;
         private static final int MAX_RESULTS = 500;
 
         @NonNull
@@ -1016,7 +1446,7 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
                 }
             }
 
-            if (mState.stack.isTrash()) {
+            if (mState.stack.isTrashTopLevel()) {
                 return createTrashFileLoader(context, initialUser);
             }
 
@@ -1096,6 +1526,22 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
             }
         }
 
+        /**
+         * If mState.acceptMimes do not limit file types, returns null, otherwise returns the
+         * acceptable MIME types. This is done to prevent acceptMimes to override the choices of
+         * files specified by dropdowns or chips.
+         *
+         * @return Acceptable MIME types or null, if any type is acceptable.
+         */
+        private String[] getAcceptMimesFilter() {
+            for (String type : mState.acceptMimes) {
+                if ("*/*".equals(type)) {
+                    return null;
+                }
+            }
+            return mState.acceptMimes;
+        }
+
         private Loader<DirectoryResult> onCreateLoaderV2(int id, Bundle args) {
             if (mExecutorService == null) {
                 // TODO(b:388130971): Fine tune the size of the thread pool.
@@ -1132,7 +1578,7 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
             // appropriately, once it gets notified about search starting.
             mSearchMgr.setCurrentRoot(root);
 
-            if (mState.stack.isTrash()) {
+            if (mState.stack.isTrashTopLevel()) {
                 return createTrashFileLoader(mActivity, initialUser);
             }
 
@@ -1146,19 +1592,29 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
             // itself, as otherwise directories containing only directories appear empty.
             String[] acceptMimes = null;
             if (stack.isRecents() || mSearchMgr.isSearching()) {
-                acceptMimes = mState.acceptMimes;
+                acceptMimes = getAcceptMimesFilter();
             } else if (mState.isPhotoPicking()) {
                 acceptMimes = new String[]{
                         DocumentsContract.Document.MIME_TYPE_DIR, MimeTypes.IMAGE_MIME,
                 };
             } else if (mState.acceptMimes != null) {
-                int mimeCount = mState.acceptMimes.length;
-                acceptMimes = Arrays.copyOf(mState.acceptMimes, mimeCount + 1);
-                acceptMimes[mimeCount - 1] = DocumentsContract.Document.MIME_TYPE_DIR;
+                acceptMimes = getAcceptMimesFilter();
+                if (acceptMimes != null) {
+                    // Add folders, so that we show something in folders that contain only folders.
+                    String[] expanded = Arrays.copyOf(acceptMimes, acceptMimes.length + 1);
+                    expanded[acceptMimes.length] = DocumentsContract.Document.MIME_TYPE_DIR;
+                    acceptMimes = expanded;
+                }
             }
-            QueryOptions options = new QueryOptions(maxResults, maxResults, lastModifiedDelta,
-                    Duration.ofMillis(MAX_SEARCH_TIME_MS), mState.showHiddenFiles, acceptMimes,
-                    mSearchMgr.buildQueryArgs());
+            QueryOptions options =
+                    new QueryOptions(
+                            maxResults,
+                            maxResults,
+                            lastModifiedDelta,
+                            Duration.ofMillis(MAX_SEARCH_TIME_MS),
+                            mState.shouldShowHiddenFiles(),
+                            acceptMimes,
+                            mSearchMgr.buildQueryArgs());
 
             if (stack.isRecents() || mSearchMgr.isSearching()) {
                 if (DEBUG) {
@@ -1170,16 +1626,22 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
                         mContentLock, AbstractActionHandler.this::loadDocumentsForCurrentStack);
                 Collection<RootInfo> roots = mProviders.getMatchingRootsBlocking(mState);
                 Collection<RootInfo> searchableRoots = mSearchMgr.getSearchRoots(roots, stack);
+                @Nullable
+                RootInfo localSearchRoot =
+                        roots.stream()
+                                .filter(it -> it.isLocalSearch(mActivity))
+                                .findFirst()
+                                .orElse(null);
                 return new SearchLoader(
                         mActivity,
                         searchableRoots,
+                        localSearchRoot,
                         mInjector.fileTypeLookup,
                         observer,
                         mSearchMgr.getCurrentSearch(),
                         options,
                         mState.sortModel,
-                        mExecutorService
-                );
+                        mExecutorService);
             }
             if (DEBUG) {
                 Log.d(TAG, "Creating folder loader V2");
@@ -1200,20 +1662,98 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
 
         @Override
         public void onLoadFinished(Loader<DirectoryResult> loader, DirectoryResult result) {
+            if (isSearchV2Enabled()) {
+                mHandler.removeCallbacks(mShowLoadingRunnable);
+            }
             if (DEBUG) {
-                Log.d(TAG, "Loader has finished for: "
-                        + DocumentInfo.debugString(mState.stack.peek()));
+                Log.d(
+                        TAG,
+                        "Loader has finished for: "
+                                + DocumentInfo.debugString(mState.stack.peek()));
             }
             assert (result != null);
-
+            // First: Update the  file list with the new results.
             mInjector.getModel().update(result);
-            mLoaderSemaphore.release();
+            if (isHomeScreenFilesFlagEnabled()) {
+                selectDocument();
+            }
+            if (!isSearchV2Enabled()) {
+                mLoaderSemaphore.release();
+            }
+
+            // Second: Fetch the summary for the result.
+            startLoadingSummaries(result);
+        }
+
+        /**
+         * Selects a document within the directory based on the URI stored in `mToSelect`.
+         * `mToSelect` is set in {@link
+         * com.android.documentsui.files.ActionHandler#launchToDocument(Intent)} if the intent
+         * provided is of application/zip mimetype and the intent originates from the launcher home
+         * screen.
+         */
+        private void selectDocument() {
+            if (mToSelect == null) {
+                return;
+            }
+            for (String modelId : mModel.getModelIds()) {
+                if (mToSelect.equals(mModel.getItemUri(modelId))) {
+                    mSelectionMgr.select(modelId);
+                    mToSelect = null;
+                    return;
+                }
+            }
         }
 
         @Override
         public void onLoaderReset(Loader<DirectoryResult> loader) {
-            mLoaderSemaphore.release();
+            if (!isSearchV2Enabled()) {
+                mLoaderSemaphore.release();
+            }
         }
+
+        private void startLoadingSummaries(DirectoryResult result) {
+            if (!FlagUtils.isUseFileSummaryEnabled() || mSummariesViewModel == null) {
+                return;
+            }
+            final SummaryProviderManager summaryProviderManager =
+                    mInjector.getSummaryProviderManager();
+            if (summaryProviderManager == null || !summaryProviderManager.isEnabled()) {
+                return;
+            }
+
+            final DocumentInfo documentInfo = mState.stack.peek();
+            final RootInfo root = mState.stack.getRoot();
+
+            // We only fetch summaries for local files.
+            if (!(root != null && (root.isLocalProvider() || root.isRecents()))) {
+                return;
+            }
+
+            // We only fetch summaries for files that are not archives.
+            if (documentInfo == null || documentInfo.isInArchive()) {
+                return;
+            }
+
+            List<String> documentIds = Arrays.asList(result.getModelIds());
+
+            final Uri summaryProviderAuthority = summaryProviderManager.getAuthorityUri();
+            if (summaryProviderAuthority == null || Uri.EMPTY.equals(summaryProviderAuthority)) {
+                Log.e(TAG, "SummaryProvider Authority URI invalid: " + summaryProviderAuthority);
+                return;
+            }
+
+            mSummariesViewModel.update(
+                    summaryProviderAuthority,
+                    documentInfo,
+                    documentIds,
+                    result.getQueryOptions(),
+                    result.getQuery());
+        }
+    }
+
+    protected void onSummariesLoaded(@NonNull Map<String, String> summaries) {
+        mModel.updateSummaries(summaries);
     }
 
     /**
@@ -1226,6 +1766,14 @@ public abstract class AbstractActionHandler<T extends FragmentActivity & CommonA
         void refreshCurrentRootAndDirectory(@AnimationType int anim);
 
         void onRootPicked(RootInfo root);
+
+        /**
+         * Handles the actions required when a shortcut entry is picked on the sidebar.
+         * This includes ensuring that the folder exists, and rebuilding to the correct
+         * document stack.
+         */
+        void onShortcutPicked(ShortcutInfo shortcut);
+
 
         // TODO: Move this to PickAddons as multi-document picking is exclusive to that activity.
         void onDocumentsPicked(List<DocumentInfo> docs);

@@ -16,6 +16,7 @@
 package com.android.documentsui.testing;
 
 import android.content.Context;
+import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.DocumentsContract.Document;
 import android.test.mock.MockContentResolver;
@@ -32,6 +33,7 @@ import com.android.documentsui.UserManagerProvider;
 import com.android.documentsui.archives.ArchivesProvider;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.Features;
+import com.android.documentsui.base.NetworkMonitorStub;
 import com.android.documentsui.base.RootInfo;
 import com.android.documentsui.base.State;
 import com.android.documentsui.base.UserId;
@@ -45,6 +47,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 
 public class TestEnv {
 
@@ -63,6 +66,8 @@ public class TestEnv {
     public static DocumentInfo FILE_IN_ARCHIVE;
     public static DocumentInfo FILE_VIRTUAL;
     public static DocumentInfo FILE_READ_ONLY;
+    public static DocumentInfo FILE_SUPPORTS_TRASH;
+    public static DocumentInfo FILE_SUPPORTS_RESTORE;
 
     public static class OtherUser {
         public static DocumentInfo FOLDER_0;
@@ -70,6 +75,7 @@ public class TestEnv {
     }
 
     public final TestScheduledExecutorService mExecutor;
+    public final TestScheduledExecutorService mMainExecutor;
     public final State state = new State();
     public final TestProvidersAccess providers = new TestProvidersAccess();
     public final TestDocumentsAccess docs = new TestDocumentsAccess();
@@ -95,6 +101,7 @@ public class TestEnv {
         userHandle = UserHandle.of(userId.getIdentifier());
         state.sortModel = SortModel.createModel();
         mExecutor = new TestScheduledExecutorService();
+        mMainExecutor = new TestScheduledExecutorService();
         model = new TestModel(userId, authority, features);
         modelOtherUser = new TestModel(TestProvidersAccess.OtherUser.USER_ID, authority, features);
         archiveModel = new TestModel(userId, ArchivesProvider.AUTHORITY, features);
@@ -118,6 +125,7 @@ public class TestEnv {
         injector.selectionMgr = selectionMgr;
         injector.focusManager = new FocusManager(features, selectionMgr, null, null, 0);
         injector.searchManager = searchViewManager;
+        injector.networkMonitor = new NetworkMonitorStub();
 
         contentResolver = new MockContentResolver();
         mockProviders = new HashMap<>(providers.getRootsBlocking().size());
@@ -192,6 +200,9 @@ public class TestEnv {
                 Document.FLAG_VIRTUAL_DOCUMENT
                         | Document.FLAG_SUPPORTS_DELETE
                         | Document.FLAG_SUPPORTS_RENAME);
+        FILE_SUPPORTS_TRASH = model.createFile("trash_file.txt", Document.FLAG_SUPPORTS_TRASH);
+        FILE_SUPPORTS_RESTORE =
+                model.createFile("trashed_file.txt", Document.FLAG_SUPPORTS_RESTORE);
 
         OtherUser.FOLDER_0 = modelOtherUser.createFolder("folder 0");
         OtherUser.FILE_PNG = modelOtherUser.createFile("work.png");
@@ -214,7 +225,20 @@ public class TestEnv {
     }
 
     public void beforeAsserts() throws Exception {
-        mExecutor.waitForTasks(30000); // 30 secs
+        final long startTimeMillis = SystemClock.uptimeMillis();
+        long timeoutMillis = TimeUnit.SECONDS.toMillis(30);
+
+        while (timeoutMillis > 0
+                && (mExecutor.hasScheduledTasks() || mMainExecutor.hasScheduledTasks())) {
+            if (mExecutor.hasScheduledTasks()) {
+                mExecutor.waitForTasks(timeoutMillis);
+                timeoutMillis -= (SystemClock.uptimeMillis() - startTimeMillis);
+            }
+            if (mMainExecutor.hasScheduledTasks()) {
+                mMainExecutor.waitForTasks(timeoutMillis);
+                timeoutMillis -= (SystemClock.uptimeMillis() - startTimeMillis);
+            }
+        }
     }
 
     public Executor lookupExecutor(String authority) {

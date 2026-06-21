@@ -17,6 +17,7 @@
 package com.android.documentsui.queries;
 
 import static com.android.documentsui.util.FlagUtils.isSearchV2Enabled;
+import static com.android.documentsui.util.FlagUtils.isUseAllfilesRootForRecentsEnabled;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
 
@@ -84,7 +85,7 @@ public class SearchChipViewManager {
     private static final String[] EMPTY_MIMETYPES = new String[]{""};
 
     private static final Map<Integer, SearchChipData> sMimeTypesChipItems = new HashMap<>();
-    private static final Map<Integer, SearchChipData> sDefaultChipItems = new HashMap<>();
+    private final Map<Integer, SearchChipData> mDefaultChipItems = new HashMap<>();
 
     private final ViewGroup mChipGroup;
     private final List<Integer> mDefaultChipTypes = new ArrayList<>();
@@ -112,18 +113,24 @@ public class SearchChipViewManager {
         sMimeTypesChipItems.put(
                 TYPE_VIDEOS,
                 new SearchChipData(TYPE_VIDEOS, R.string.chip_title_videos, VIDEOS_MIMETYPES));
-        sDefaultChipItems.put(
-                TYPE_LARGE_FILES,
-                new SearchChipData(
-                        TYPE_LARGE_FILES, R.string.chip_title_large_files, EMPTY_MIMETYPES));
-        sDefaultChipItems.put(
-                TYPE_FROM_THIS_WEEK,
-                new SearchChipData(
-                        TYPE_FROM_THIS_WEEK, R.string.chip_title_from_this_week, EMPTY_MIMETYPES));
     }
 
     public SearchChipViewManager(@NonNull ViewGroup chipGroup) {
         mChipGroup = chipGroup;
+        // When use_allfiles_root_for_recents flag is ON, "This week" chip's functionality can be
+        // fulfilled in "Recents" root, so we hide these 2 chips.
+        if (!isUseAllfilesRootForRecentsEnabled()) {
+            mDefaultChipItems.put(
+                    TYPE_LARGE_FILES,
+                    new SearchChipData(
+                            TYPE_LARGE_FILES, R.string.chip_title_large_files, EMPTY_MIMETYPES));
+            mDefaultChipItems.put(
+                    TYPE_FROM_THIS_WEEK,
+                    new SearchChipData(
+                            TYPE_FROM_THIS_WEEK,
+                            R.string.chip_title_from_this_week,
+                            EMPTY_MIMETYPES));
+        }
     }
 
     /**
@@ -140,7 +147,7 @@ public class SearchChipViewManager {
                 if (sMimeTypesChipItems.containsKey(chipType)) {
                     chipData = sMimeTypesChipItems.get(chipType);
                 } else {
-                    chipData = sDefaultChipItems.get(chipType);
+                    chipData = mDefaultChipItems.get(chipType);
                 }
 
                 mCheckedChipItems.add(chipData);
@@ -277,7 +284,7 @@ public class SearchChipViewManager {
             }
         }
 
-        for (SearchChipData chipData : sDefaultChipItems.values()) {
+        for (SearchChipData chipData : mDefaultChipItems.values()) {
             addChipToGroup(mChipGroup, chipData, inflater);
         }
 
@@ -551,28 +558,35 @@ public class SearchChipViewManager {
         }
 
         if (hasAnim && mChipGroup.isAttachedToWindow()) {
-            // start animation
-            for (Chip chip : chipList) {
-                if (isRtl) {
-                    lastX -= chip.getMeasuredWidth();
-                }
+            final boolean areAnimatorsEnabled = ObjectAnimator.areAnimatorsEnabled();
+            if (areAnimatorsEnabled) {
+                // start animation
+                for (Chip chip : chipList) {
+                    if (isRtl) {
+                        lastX -= chip.getMeasuredWidth();
+                    }
 
-                ObjectAnimator animator = ObjectAnimator.ofFloat(chip, "x", chip.getX(), lastX);
+                    ObjectAnimator animator = ObjectAnimator.ofFloat(chip, "x", chip.getX(), lastX);
 
-                if (isRtl) {
-                    lastX -= chipSpacing;
-                } else {
-                    lastX += chip.getMeasuredWidth() + chipSpacing;
+                    if (isRtl) {
+                        lastX -= chipSpacing;
+                    } else {
+                        lastX += chip.getMeasuredWidth() + chipSpacing;
+                    }
+                    animator.setDuration(CHIP_MOVE_ANIMATION_DURATION);
+                    animator.start();
                 }
-                animator.setDuration(CHIP_MOVE_ANIMATION_DURATION);
-                animator.start();
             }
 
             // Let the first checked chip can be shown.
             View parent = (View) mChipGroup.getParent().getParent();
             if (parent instanceof HorizontalScrollView) {
                 final int scrollToX = isRtl ? parent.getWidth() : 0;
-                ((HorizontalScrollView) parent).smoothScrollTo(scrollToX, 0);
+                if (areAnimatorsEnabled) {
+                    ((HorizontalScrollView) parent).smoothScrollTo(scrollToX, 0);
+                } else {
+                    ((HorizontalScrollView) parent).scrollTo(scrollToX, 0);
+                }
                 if (mChipGroup.getChildCount() > 0) {
                     mChipGroup.getChildAt(0)
                             .sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_FOCUSED);

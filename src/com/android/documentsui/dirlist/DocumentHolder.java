@@ -18,12 +18,12 @@ package com.android.documentsui.dirlist;
 
 import static com.android.documentsui.DevicePolicyResources.Strings.PREVIEW_WORK_FILE_ACCESSIBILITY;
 import static com.android.documentsui.DevicePolicyResources.Strings.UNDEFINED;
+import static com.android.documentsui.util.FlagUtils.isSyncStateEnabled;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.app.admin.DevicePolicyManager;
 import android.content.Context;
-import android.database.Cursor;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.KeyEvent;
@@ -43,6 +43,7 @@ import com.android.documentsui.ConfigStore;
 import com.android.documentsui.DocumentsApplication;
 import com.android.documentsui.R;
 import com.android.documentsui.UserManagerState;
+import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.Shared;
 import com.android.documentsui.base.State;
 import com.android.documentsui.base.UserId;
@@ -68,7 +69,7 @@ public abstract class DocumentHolder
     protected final ConfigStore mConfigStore;
 
     // See #addKeyEventListener for details on the need for this field.
-    private KeyboardEventListener<DocumentItemDetails> mKeyEventListener;
+    private KeyboardEventListener<ItemDetails<String>> mKeyEventListener;
 
     private final DocumentItemDetails mDetails;
 
@@ -86,10 +87,12 @@ public abstract class DocumentHolder
         mConfigStore = configStore;
     }
 
-    /**
-     * Binds the view to the given item data.
-     */
-    public abstract void bind(Cursor cursor, String modelId);
+    /** Binds the view to the given item data. */
+    public abstract void bind(
+            DocumentInfo doc,
+            String modelId,
+            @androidx.annotation.Nullable String summary,
+            boolean justFinishedSync);
 
     public String getModelId() {
         return mModelId;
@@ -141,24 +144,97 @@ public abstract class DocumentHolder
     public void bindProfileIcon(boolean show, int userIdIdentifier) {
     }
 
+    /** Binds the sync icons, if they exist, to the document's thumbnail. */
+    protected void bindSyncIcons(DocumentInfo doc, boolean justFinishedSync) {
+        if (!isSyncStateEnabled()) {
+            return;
+        }
+
+        hideSyncIcons();
+
+        if (!doc.hasSyncState()) {
+            return;
+        }
+
+        View progressView = itemView.findViewById(android.R.id.progress);
+        View syncErrorView = itemView.findViewById(getRes(R.id.sync_error_icon));
+        View uploadView = itemView.findViewById(getRes(R.id.upload_icon));
+        View tickView = itemView.findViewById(getRes(R.id.progress_tick_icon));
+
+        if ((doc.hasUploadInProgress() || doc.hasDownloadInProgress()) && progressView != null) {
+            progressView.setVisibility(View.VISIBLE);
+            if (doc.hasUploadInProgress()) {
+                progressView.setContentDescription(
+                        mContext.getString(getRes(R.string.uploading_description_m3)));
+                progressView.setTooltipText(
+                        mContext.getString(getRes(R.string.uploading_description_m3)));
+            } else {
+                progressView.setContentDescription(
+                        mContext.getString(getRes(R.string.downloading_description_m3)));
+                progressView.setTooltipText(
+                        mContext.getString(getRes(R.string.downloading_description_m3)));
+            }
+        } else if (doc.hasSyncError() && syncErrorView != null) {
+            syncErrorView.setVisibility(View.VISIBLE);
+            syncErrorView.setContentDescription(
+                    mContext.getString(getRes(R.string.sync_error_description_m3)));
+            syncErrorView.setTooltipText(
+                    mContext.getString(getRes(R.string.sync_error_description_m3)));
+        } else if (doc.hasLocalChanges() && uploadView != null) {
+            uploadView.setVisibility(View.VISIBLE);
+            uploadView.setContentDescription(
+                    mContext.getString(getRes(R.string.upload_description_m3)));
+            uploadView.setTooltipText(mContext.getString(getRes(R.string.upload_description_m3)));
+        } else if (justFinishedSync && tickView != null) {
+            tickView.setVisibility(View.VISIBLE);
+            tickView.setContentDescription(
+                    mContext.getString(getRes(R.string.synced_description_m3)));
+            tickView.setTooltipText(mContext.getString(getRes(R.string.synced_description_m3)));
+        }
+    }
+
+    /** Hides all sync icons. */
+    protected void hideSyncIcons() {
+        if (!isUseMaterial3FlagEnabled() || !isSyncStateEnabled()) {
+            return;
+        }
+
+        View progressView = itemView.findViewById(android.R.id.progress);
+        View syncErrorView = itemView.findViewById(getRes(R.id.sync_error_icon));
+        View uploadView = itemView.findViewById(getRes(R.id.upload_icon));
+        View tickView = itemView.findViewById(getRes(R.id.progress_tick_icon));
+
+        if (progressView != null) {
+            progressView.setVisibility(View.GONE);
+        }
+        if (syncErrorView != null) {
+            syncErrorView.setVisibility(View.GONE);
+        }
+        if (uploadView != null) {
+            uploadView.setVisibility(View.GONE);
+        }
+        if (tickView != null) {
+            tickView.setVisibility(View.GONE);
+        }
+    }
+
     @Override
     public boolean onKey(View v, int keyCode, KeyEvent event) {
         assert (mKeyEventListener != null);
-        DocumentItemDetails details = getItemDetails();
+        ItemDetails<String> details = getItemDetails();
         return (details == null)
                 ? false
                 : mKeyEventListener.onKey(details, keyCode, event);
     }
 
     /**
-     * Installs a delegate to receive keyboard input events. This arrangement is necessitated
-     * by the fact that a single listener cannot listen to all keyboard events
-     * on RecyclerView (our parent view). Not sure why this is, but have been
-     * assured it is the case.
+     * Installs a delegate to receive keyboard input events. This arrangement is necessitated by the
+     * fact that a single listener cannot listen to all keyboard events on RecyclerView (our parent
+     * view). Not sure why this is, but have been assured it is the case.
      *
      * <p>Ideally we'd not involve DocumentHolder in propagation of events like this.
      */
-    public void addKeyEventListener(KeyboardEventListener<DocumentItemDetails> listener) {
+    public void addKeyEventListener(KeyboardEventListener<ItemDetails<String>> listener) {
         assert (mKeyEventListener == null);
         mKeyEventListener = listener;
     }
@@ -200,6 +276,15 @@ public abstract class DocumentHolder
     private static <V extends View> V inflateLayout(Context context, ViewGroup parent, int layout) {
         final LayoutInflater inflater = LayoutInflater.from(context);
         return (V) inflater.inflate(layout, parent, false);
+    }
+
+    static View conditionalView(boolean b, View view) {
+        if (b) {
+            return view;
+        } else if (view != null) {
+            view.setVisibility(View.GONE);
+        }
+        return null;
     }
 
     static ViewPropertyAnimator fade(ImageView view, float alpha) {

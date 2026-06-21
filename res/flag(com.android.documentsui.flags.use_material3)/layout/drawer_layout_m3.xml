@@ -15,14 +15,21 @@
 -->
 
 <!-- CoordinatorLayout is necessary for various components (e.g. Snackbars, and
-     floating action buttons) to operate correctly. -->
+     floating action buttons) to operate correctly. This is the root container of the whole app,
+     make it focusable so it can act as a "focus sink" for the system, e.g. when there's nothing
+     to be focused, the system will focus on this view instead. This is to avoid the system to
+     focus on the top-left view (e.g. Recent root in the sidenav) in certain scenarios, e.g. for
+     unhandled keypress like Enter/Space on the black area of the file list. A custom background
+     is provided to prevent the default grey-ish overlay for focused state. -->
 <androidx.coordinatorlayout.widget.CoordinatorLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurfaceContainer"
-    android:id="@+id/coordinator_layout">
+    android:id="@+id/coordinator_layout"
+    android:background="@drawable/coordinator_layout_background"
+    android:focusable="true"
+    android:descendantFocusability="beforeDescendants">
 
     <androidx.drawerlayout.widget.DrawerLayout
         android:id="@+id/drawer_layout"
@@ -30,49 +37,57 @@
         android:layout_height="match_parent">
 
         <!-- Main container -->
-        <androidx.coordinatorlayout.widget.CoordinatorLayout
+        <LinearLayout
             android:id="@+id/main_container"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:orientation="vertical"
-            android:paddingTop="@dimen/main_container_padding_top"
             android:background="?attr/colorSurfaceBright">
 
-            <!-- Main list area (file list/grid or search results), full height -->
-            <FrameLayout
+            <!-- Container for app bar and list area -->
+            <androidx.coordinatorlayout.widget.CoordinatorLayout
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                app:layout_behavior="@string/scrolling_behavior_m3">
+                android:layout_height="0dp"
+                android:layout_weight="1">
 
+                <!-- Main list area (file list/grid or search results) -->
                 <FrameLayout
-                    android:id="@+id/container_directory"
-                    android:clipToPadding="false"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:layout_weight="1" />
+                    app:layout_behavior="@string/scrolling_behavior_m3">
 
-                <FrameLayout
-                    android:id="@+id/container_search_fragment"
-                    android:clipToPadding="false"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent" />
+                    <FrameLayout
+                        android:id="@+id/container_directory"
+                        android:clipToPadding="false"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent" />
 
-                <!-- Drawer edge is a placeholder view used to capture hovering
-                     event on view edge to open the drawer. (b/28345294) -->
-                <View
-                    android:id="@+id/drawer_edge"
-                    android:background="@android:color/transparent"
-                    android:layout_width="@dimen/drawer_edge_width_m3"
-                    android:layout_height="match_parent"/>
-            </FrameLayout>
+                    <FrameLayout
+                        android:id="@+id/container_search_fragment"
+                        android:clipToPadding="false"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent" />
 
-            <!-- Footer of right hand side: Breadcrumbs and Picker footer. -->
+                    <!-- Drawer edge is a placeholder view used to capture hovering
+                         event on view edge to open the drawer. (b/28345294) -->
+                    <View
+                        android:id="@+id/drawer_edge"
+                        android:background="@android:color/transparent"
+                        android:layout_width="@dimen/drawer_edge_width_m3"
+                        android:layout_height="match_parent"/>
+                </FrameLayout>
+
+                <!-- Top section: toolbar, search chips, profile tab -->
+                <include layout="@layout/directory_app_bar_m3"/>
+
+            </androidx.coordinatorlayout.widget.CoordinatorLayout>
+
+            <!-- Footer: Breadcrumbs and Picker footer. -->
             <LinearLayout
                 android:id="@+id/bottom_container"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:layout_gravity="bottom">
+                android:orientation="vertical">
 
                 <com.google.android.material.divider.MaterialDivider
                     android:id="@+id/breadcrumb_top_divider"
@@ -88,6 +103,16 @@
                     android:background="?attr/colorSurfaceBright"
                     android:paddingHorizontal="@dimen/breadcrumb_padding_horizontal" />
 
+                <!-- We only want the path item to be focusable, the whole row should not be
+                focusable. -->
+                <com.android.documentsui.breadcrumbs.BreadcrumbView
+                    android:id="@+id/breadcrumb_view_v2"
+                    android:focusable="false"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="?attr/colorSurfaceBright"
+                    android:paddingHorizontal="@dimen/breadcrumb_padding_horizontal" />
+
                 <androidx.coordinatorlayout.widget.CoordinatorLayout
                     android:id="@+id/container_save"
                     android:layout_width="match_parent"
@@ -96,10 +121,7 @@
 
             </LinearLayout>
 
-            <!-- Top section: toolbar, search chips, profile tab -->
-            <include layout="@layout/directory_app_bar_m3"/>
-
-        </androidx.coordinatorlayout.widget.CoordinatorLayout>
+        </LinearLayout>
 
         <!-- Drawer section -->
         <LinearLayout

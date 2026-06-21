@@ -24,12 +24,12 @@ import android.content.DialogInterface;
 import android.net.Uri;
 import android.os.Bundle;
 
-import androidx.fragment.app.DialogFragment;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentTransaction;
 
 import com.android.documentsui.BaseActivity;
+import com.android.documentsui.DocumentsUIDialogFragment;
 import com.android.documentsui.R;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.Shared;
@@ -37,10 +37,8 @@ import com.android.modules.utils.build.SdkLevel;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
-/**
- * Used to confirm with user that it's OK to overwrite an existing file.
- */
-public class ConfirmFragment extends DialogFragment {
+/** Used to confirm with user that it's OK to overwrite an existing file. */
+public class ConfirmFragment extends DocumentsUIDialogFragment {
 
     private static final String TAG = "ConfirmFragment";
 
@@ -70,13 +68,15 @@ public class ConfirmFragment extends DialogFragment {
         final MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(getActivity());
         switch (mType) {
             case TYPE_OVERWRITE:
+                String title = getString(getRes(R.string.overwrite_file_confirmation_title));
                 String message =
                         String.format(
                                 getString(getRes(R.string.overwrite_file_confirmation_message)),
                                 mTarget.displayName);
+                builder.setTitle(title);
                 builder.setMessage(message);
                 builder.setPositiveButton(
-                        android.R.string.ok,
+                        getRes(R.string.overwrite_file_confirmation_positive_button),
                         (DialogInterface dialog, int id) -> {
                             pickResult.increaseActionCount();
                             mActions.finishPicking(mTarget.getDocumentUri());
@@ -86,16 +86,16 @@ public class ConfirmFragment extends DialogFragment {
                 final Uri treeUri = mTarget.getTreeDocumentUri();
                 final BaseActivity activity = (BaseActivity) getActivity();
                 final String target = activity.getCurrentTitle();
+                // TODO(b/456014591): Remove the empty string once the translation is done.
+                //  We remove one argument during the string update but still pass the empty string
+                //  below, otherwise it will crash before the translation is done for other
+                //  languages.
                 final String text =
                         getString(
                                 getRes(R.string.open_tree_dialog_title),
                                 getCallingAppName(getActivity()),
-                                target);
-                message =
-                        getString(
-                                getRes(R.string.open_tree_dialog_message),
-                                getCallingAppName(getActivity()),
-                                target);
+                                "");
+                message = getString(getRes(R.string.open_tree_dialog_message), target, "");
 
                 builder.setTitle(text);
                 builder.setMessage(message);

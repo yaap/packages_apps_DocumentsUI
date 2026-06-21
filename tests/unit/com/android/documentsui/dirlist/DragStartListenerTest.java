@@ -16,19 +16,30 @@
 
 package com.android.documentsui.dirlist;
 
+import static android.provider.Flags.FLAG_ENABLE_SYNC_STATE;
+
+import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static junit.framework.Assert.assertFalse;
 import static junit.framework.Assert.assertTrue;
 
+import android.os.Build;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
+import android.platform.test.annotations.RequiresFlagsEnabled;
+import android.platform.test.flag.junit.CheckFlagsRule;
+import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.provider.DocumentsContract;
 import android.view.MotionEvent;
 import android.view.View;
 
 import androidx.recyclerview.selection.MutableSelection;
 import androidx.recyclerview.selection.Selection;
+import androidx.test.filters.SdkSuppress;
 import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
 import com.android.documentsui.DocsSelectionHelper;
+import com.android.documentsui.DocumentsAccess;
 import com.android.documentsui.MenuManager.SelectionDetails;
 import com.android.documentsui.SelectionHelpers;
 import com.android.documentsui.base.DocumentInfo;
@@ -36,20 +47,32 @@ import com.android.documentsui.base.Events;
 import com.android.documentsui.base.Providers;
 import com.android.documentsui.base.State;
 import com.android.documentsui.dirlist.DragStartListener.RuntimeDragStartListener;
+import com.android.documentsui.flags.Flags;
+import com.android.documentsui.rules.OverrideFlagsRule;
+import com.android.documentsui.testing.TestDocumentsAccess;
 import com.android.documentsui.testing.TestDragAndDropManager;
 import com.android.documentsui.testing.TestEvents;
 import com.android.documentsui.testing.TestSelectionDetails;
 import com.android.documentsui.testing.Views;
 
+import com.android.documentsui.util.FlagUtils;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import java.util.ArrayList;
+import java.util.List;
 
 @RunWith(AndroidJUnit4.class)
 @SmallTest
 public class DragStartListenerTest {
+    @Rule public final OverrideFlagsRule mOverrideFlagsRule = new OverrideFlagsRule();
+
+    @Rule
+    public final CheckFlagsRule mCheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule();
+
+    private static int sIsUnavailableFlag = 1;
 
     private RuntimeDragStartListener mListener;
     private TestEvents.Builder mEvent;
@@ -58,6 +81,9 @@ public class DragStartListenerTest {
     private SelectionDetails mSelectionDetails;
     private String mViewModelId;
     private TestDragAndDropManager mManager;
+    private List<DocumentInfo> mSrcs;
+    private DocumentInfo mDoc;
+    private DocumentsAccess mDocsAccess;
 
     @Before
     public void setUp() throws Exception {
@@ -65,33 +91,43 @@ public class DragStartListenerTest {
         mManager = new TestDragAndDropManager();
         mSelectionDetails = new TestSelectionDetails();
         mDocLookup = new TestItemDetailsLookup();
-
-        DocumentInfo doc = new DocumentInfo();
-        doc.authority = Providers.AUTHORITY_STORAGE;
-        doc.documentId = "id";
-        doc.derivedUri = DocumentsContract.buildDocumentUri(doc.authority, doc.documentId);
+        mSrcs = new ArrayList<>();
+        mDoc = new DocumentInfo();
+        mDoc.authority = Providers.AUTHORITY_STORAGE;
+        mDoc.documentId = "id";
+        mDoc.derivedUri = DocumentsContract.buildDocumentUri(mDoc.authority, mDoc.documentId);
+        mDocsAccess = new TestDocumentsAccess();
 
         State state = new State();
-        state.stack.push(doc);
+        state.stack.push(mDoc);
 
-        mListener = new DragStartListener.RuntimeDragStartListener(
-                null, // icon helper
-                state,
-                mSelectionMgr,
-                mSelectionDetails,
-                // view finder
-                (float x, float y) -> {
-                    return Views.createTestView(x, y);
-                },
-                // model id finder
-                (View view) -> {
-                    return mViewModelId;
-                },
-                // docInfo Converter
-                (Selection<String> selection) -> {
-                    return new ArrayList<>();
-                },
-                mManager);
+        mListener =
+                new DragStartListener.RuntimeDragStartListener(
+                        null, // icon helper
+                        state,
+                        mSelectionMgr,
+                        mSelectionDetails,
+                        // view finder
+                        (float x, float y) -> {
+                            return Views.createTestView(x, y);
+                        },
+                        // model id finder
+                        (View view) -> {
+                            return mViewModelId;
+                        },
+                        // docInfo Converter
+                        (Selection<String> selection) -> {
+                            return mSrcs;
+                        },
+                        // isContentAvailable
+                        (DocumentInfo docInfo) -> {
+                            boolean fakeIsContentAvailable =
+                                    docInfo.syncStateFlags == null
+                                            || docInfo.syncStateFlags != sIsUnavailableFlag;
+                            return fakeIsContentAvailable;
+                        },
+                        mManager,
+                        mDocsAccess);
 
         mViewModelId = "1234";
 
@@ -125,8 +161,13 @@ public class DragStartListenerTest {
 
     @Test
     public void testDragStarted_OnMouseMove() {
+        mSrcs.add(mDoc);
+
         assertTrue(mListener.onDragEvent(mEvent.build()));
+
         mManager.startDragHandler.assertCalled();
+        mManager.startDragHandler.assertLastArgument(mSrcs);
+        assertTrue(mManager.mLastCanDragAndDrop);
     }
 
     @Test
@@ -134,6 +175,44 @@ public class DragStartListenerTest {
         mViewModelId = null;
         assertFalse(mListener.onDragEvent(mEvent.build()));
         mManager.startDragHandler.assertNotCalled();
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @EnableFlags({Flags.FLAG_CLOUD_FEATURES, Flags.FLAG_USE_MATERIAL3})
+    public void testDragStarted_ContentNotAvailable() {
+        // Set one of the source files to be unavailable.
+        DocumentInfo unavailableDoc = new DocumentInfo();
+        unavailableDoc.syncStateFlags = sIsUnavailableFlag;
+        mSrcs.add(unavailableDoc);
+        mSrcs.add(mDoc);
+
+        assertTrue(mListener.onDragEvent(mEvent.build()));
+
+        // Ensure that the files cannot be dragged and dropped.
+        mManager.startDragHandler.assertCalled();
+        mManager.startDragHandler.assertLastArgument(mSrcs);
+        assertFalse(mManager.mLastCanDragAndDrop);
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @DisableFlags(Flags.FLAG_CLOUD_FEATURES)
+    public void testDragStarted_ContentNotAvailable_FeatureFlagDisabled() {
+        // Set one of the source files to be unavailable.
+        DocumentInfo unavailableDoc = new DocumentInfo();
+        unavailableDoc.syncStateFlags = sIsUnavailableFlag;
+        mSrcs.add(unavailableDoc);
+        mSrcs.add(mDoc);
+
+        assertTrue(mListener.onDragEvent(mEvent.build()));
+
+        // Ensure that the files can still be dragged and dropped.
+        mManager.startDragHandler.assertCalled();
+        mManager.startDragHandler.assertLastArgument(mSrcs);
+        assertTrue(mManager.mLastCanDragAndDrop);
     }
 
     @Test
@@ -159,6 +238,7 @@ public class DragStartListenerTest {
     }
 
     @Test
+    @DisableFlags(Flags.FLAG_USE_MATERIAL3)
     public void testDragStart_newNonSelectedItem() {
         MutableSelection<String> selection = new MutableSelection<>();
         selection.add("5678");
@@ -170,6 +250,23 @@ public class DragStartListenerTest {
         assertTrue(selection.contains("1234"));
         // After this, selection should be cleared
         assertFalse(mSelectionMgr.hasSelection());
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_USE_MATERIAL3)
+    public void testDragStart_newNonSelectedItem_updateSelection() {
+        MutableSelection<String> selection = new MutableSelection<>();
+        selection.add("5678");
+        mSelectionMgr.replaceSelection(selection);
+
+        selection =
+                mListener.getSelectionToBeCopied(
+                        "1234", mEvent.action(MotionEvent.ACTION_MOVE).build());
+        assertTrue(selection.size() == 1);
+        assertTrue(selection.contains("1234"));
+        // Selection should be updated to the SelectionManager.
+        assertTrue(mSelectionMgr.hasSelection());
+        assertTrue(mSelectionMgr.isSelected("1234"));
     }
 
     @Test

@@ -16,11 +16,14 @@
 
 package com.android.documentsui.dirlist;
 
+import static com.android.documentsui.dirlist.DirectoryFragment.TICK_VISIBLE_DURATION_MS;
+
 import android.content.Context;
 import android.database.Cursor;
 
 import com.android.documentsui.ActionHandler;
 import com.android.documentsui.Model;
+import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.Features;
 import com.android.documentsui.base.State;
 import com.android.documentsui.testing.TestEnv;
@@ -29,13 +32,15 @@ public final class TestEnvironment implements DocumentsAdapter.Environment {
     private final Context testContext;
     private final TestEnv mEnv;
     private final ActionHandler mActionHandler;
-    private boolean mInSearchMode;
+    private boolean mInSearchMode = false;
+    private boolean mIsOnTrashPage = false;
+    private boolean mIsOnline = true;
+    private boolean mShouldDisplaySummary = false;
 
-    public TestEnvironment(Context testContext, TestEnv env, ActionHandler actionHandler) {
-        this.testContext = testContext;
+    public TestEnvironment(Context context, TestEnv env, ActionHandler actionHandler) {
+        testContext = context;
         mEnv = env;
         mActionHandler = actionHandler;
-        mInSearchMode = false;
     }
 
     @Override
@@ -54,7 +59,17 @@ public final class TestEnvironment implements DocumentsAdapter.Environment {
     }
 
     @Override
-    public boolean isDocumentEnabled(String mimeType, int flags) {
+    public boolean isOnline() {
+        return mIsOnline;
+    }
+
+    @Override
+    public boolean isDocumentEnabled(DocumentInfo doc) {
+        return true;
+    }
+
+    @Override
+    public boolean isContentAvailable(DocumentInfo doc) {
         return true;
     }
 
@@ -65,6 +80,11 @@ public final class TestEnvironment implements DocumentsAdapter.Environment {
     @Override
     public Model getModel() {
         return mEnv.model;
+    }
+
+    @Override
+    public int getTickDuration() {
+        return TICK_VISIBLE_DURATION_MS;
     }
 
     @Override
@@ -91,7 +111,29 @@ public final class TestEnvironment implements DocumentsAdapter.Environment {
     public void onBindDocumentHolder(DocumentHolder holder, Cursor cursor) {
     }
 
+    @Override
+    public boolean shouldDisplaySummary() {
+        return mShouldDisplaySummary;
+    }
+
+    @Override
+    public boolean isOnTrashPage() {
+        return mIsOnTrashPage;
+    }
+
     public void setInSearchMode(boolean inSearchMode) {
         mInSearchMode = inSearchMode;
+    }
+
+    public void setIsOnTrashPage(boolean isOnTrashPage) {
+        mIsOnTrashPage = isOnTrashPage;
+    }
+
+    public void setIsOnline(boolean isOnline) {
+        mIsOnline = isOnline;
+    }
+
+    public void setShouldDisplaySummary(boolean shouldDisplaySummary) {
+        mShouldDisplaySummary = shouldDisplaySummary;
     }
 }

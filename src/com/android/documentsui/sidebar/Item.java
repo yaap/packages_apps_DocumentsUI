@@ -46,13 +46,11 @@ public abstract class Item {
      */
     private boolean mIsSelected;
 
-    public final String title;
     public final UserId userId;
     final String stringId;
 
-    public Item(@LayoutRes int layoutId, String title, String stringId, UserId userId) {
+    public Item(@LayoutRes int layoutId, String stringId, UserId userId) {
         mLayoutId = layoutId;
-        this.title = title;
         this.stringId = stringId;
         this.userId = userId;
     }
@@ -72,14 +70,11 @@ public abstract class Item {
 
     abstract boolean isRoot();
 
-    abstract void open();
-
-    /**
-     * Get the package name string.
-     */
-    public String getPackageName() {
-        return "";
+    boolean isShortcut() {
+        return false;
     }
+
+    abstract void open();
 
     /**
      * Get the root or app summary such as account information.
@@ -89,7 +84,7 @@ public abstract class Item {
     }
 
     boolean isDropTarget() {
-        return isRoot();
+        return false;
     }
 
     boolean dropOn(DragEvent event) {

@@ -16,45 +16,41 @@
 
 package com.android.documentsui.files;
 
-import static android.content.ContentResolver.wrap;
-
 import static com.android.documentsui.base.SharedMinimal.DEBUG;
 import static com.android.documentsui.util.FlagUtils.isDesktopFileHandlingFlagEnabled;
+import static com.android.documentsui.util.FlagUtils.isHomeScreenFilesFlagEnabled;
+import static com.android.documentsui.util.FlagUtils.isSyncStateEnabled;
+import static com.android.documentsui.util.FlagUtils.isTrashFlowEnabled;
+import static com.android.documentsui.util.FlagUtils.isUseApprovedDocumentHandlerEnabled;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
-import static com.android.documentsui.util.FlagUtils.isUsePeekPreviewFlagEnabled;
+import static com.android.documentsui.util.FlagUtils.isUseNewOpenWithEnabled;
 
 import android.app.DownloadManager;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ComponentName;
-import android.content.ContentProviderClient;
-import android.content.ContentResolver;
 import android.content.Intent;
 import android.net.Uri;
-import android.os.FileUtils;
+import android.os.Trace;
 import android.provider.DocumentsContract;
-import android.text.TextUtils;
 import android.util.Log;
 import android.view.DragEvent;
 
 import androidx.annotation.VisibleForTesting;
 import androidx.fragment.app.FragmentActivity;
 import androidx.recyclerview.selection.ItemDetailsLookup.ItemDetails;
-import androidx.recyclerview.selection.MutableSelection;
 import androidx.recyclerview.selection.Selection;
 
 import com.android.documentsui.AbstractActionHandler;
 import com.android.documentsui.ActionModeAddons;
 import com.android.documentsui.ActivityConfig;
 import com.android.documentsui.DocumentsAccess;
-import com.android.documentsui.DocumentsApplication;
 import com.android.documentsui.DragAndDropManager;
 import com.android.documentsui.Injector;
 import com.android.documentsui.MetricConsts;
 import com.android.documentsui.Metrics;
 import com.android.documentsui.R;
 import com.android.documentsui.TimeoutTask;
-import com.android.documentsui.base.DebugFlags;
 import com.android.documentsui.base.DocumentFilters;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.DocumentStack;
@@ -64,22 +60,25 @@ import com.android.documentsui.base.MimeTypes;
 import com.android.documentsui.base.Providers;
 import com.android.documentsui.base.RootInfo;
 import com.android.documentsui.base.Shared;
+import com.android.documentsui.base.ShortcutInfo;
+import com.android.documentsui.base.SidebarEntryItemInfo;
 import com.android.documentsui.base.State;
 import com.android.documentsui.base.UserId;
 import com.android.documentsui.clipping.ClipStore;
 import com.android.documentsui.clipping.DocumentClipper;
 import com.android.documentsui.clipping.UrisSupplier;
 import com.android.documentsui.dirlist.AnimationView;
-import com.android.documentsui.inspector.InspectorActivity;
 import com.android.documentsui.peek.PeekViewManager;
 import com.android.documentsui.queries.SearchViewManager;
 import com.android.documentsui.roots.ProvidersAccess;
 import com.android.documentsui.services.FileOperation;
 import com.android.documentsui.services.FileOperationService;
 import com.android.documentsui.services.FileOperations;
+import com.android.documentsui.util.FlagUtils;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.Executor;
 
 import javax.annotation.Nullable;
@@ -95,14 +94,10 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
     private static final String TAG = "ManagerActionHandler";
     private static final int SHARE_FILES_COUNT_LIMIT = 100;
 
-    private final ActionModeAddons mActionModeAddons;
     private final Features mFeatures;
     private final ActivityConfig mConfig;
     private final DocumentClipper mClipper;
-    private final ClipStore mClipStore;
     private final DragAndDropManager mDragAndDropManager;
-    private final Runnable mCloseSelectionBar;
-    private final @Nullable PeekViewManager mPeekViewManager;
 
     ActionHandler(
             T activity,
@@ -119,21 +114,33 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
             @Nullable PeekViewManager peekViewManager,
             Injector injector) {
 
-        super(activity, state, providers, docs, searchMgr, executors, injector);
+        super(
+                activity,
+                state,
+                providers,
+                docs,
+                searchMgr,
+                executors,
+                injector,
+                peekViewManager,
+                actionModeAddons,
+                closeSelectionBar,
+                clipStore);
 
-        mActionModeAddons = actionModeAddons;
-        mCloseSelectionBar = closeSelectionBar;
         mFeatures = injector.features;
         mConfig = injector.config;
         mClipper = clipper;
-        mClipStore = clipStore;
         mDragAndDropManager = dragAndDropManager;
-        mPeekViewManager = peekViewManager;
     }
 
     @Override
     public boolean dropOn(DragEvent event, RootInfo root) {
-        if (!root.supportsCreate() || root.isLibrary()) {
+        if (!root.isValidDropTarget()) {
+            return false;
+        }
+
+        // Library roots do not support drag & drop operations.
+        if (root.isLibrary()) {
             return false;
         }
 
@@ -144,7 +151,34 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
         final Object localState = event.getLocalState();
 
         return mDragAndDropManager.drop(
-                clipData, localState, root, this, mDialogs::showFileOperationStatus);
+                DragAndDropManager.requestPermissions(mActivity, event),
+                clipData,
+                localState,
+                root,
+                this,
+                mDocs,
+                mDialogs::showFileOperationStatus,
+                mDragAndDropManager.getInvalidDestinations());
+    }
+
+    @Override
+    public boolean dropOn(DragEvent event, ShortcutInfo shortcut) {
+        if (!shortcut.isValidDropTarget()) {
+            return false;
+        }
+
+        final ClipData clipData = event.getClipData();
+        final Object localState = event.getLocalState();
+
+        return mDragAndDropManager.drop(
+                DragAndDropManager.requestPermissions(mActivity, event),
+                clipData,
+                localState,
+                shortcut,
+                this,
+                mDocs,
+                mDialogs::showFileOperationStatus,
+                mDragAndDropManager.getInvalidDestinations());
     }
 
     @Override
@@ -157,7 +191,7 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
         assert(selection.size() == 1);
         DocumentInfo doc = mModel.getDocument(selection.iterator().next());
         assert(doc != null);
-        openInNewWindow(new DocumentStack(mState.stack, doc));
+        openInNewWindow(new DocumentStack(mState.stack, doc), mState.shortcut);
     }
 
     @Override
@@ -169,35 +203,18 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
     }
 
     @Override
-    public void pasteIntoFolder(RootInfo root) {
-        this.getRootDocument(
-                root,
+    public void pasteIntoFolder(SidebarEntryItemInfo itemInfo) {
+        this.getDocument(
+                itemInfo.getRoot().authority,
+                itemInfo.getDocumentId(),
+                itemInfo.getRoot().userId,
                 TimeoutTask.DEFAULT_TIMEOUT,
-                (DocumentInfo doc) -> pasteIntoFolder(root, doc));
+                (DocumentInfo doc) -> pasteIntoFolder(itemInfo.getRoot(), doc));
     }
 
     private void pasteIntoFolder(RootInfo root, @Nullable DocumentInfo doc) {
         DocumentStack stack = new DocumentStack(root, doc);
         mClipper.copyFromClipboard(doc, stack, mDialogs::showFileOperationStatus);
-    }
-
-    @Override
-    public @Nullable DocumentInfo renameDocument(String name, DocumentInfo document) {
-        ContentResolver resolver = document.userId.getContentResolver(mActivity);
-        ContentProviderClient client = null;
-
-        try {
-            client = DocumentsApplication.acquireUnstableProviderOrThrow(
-                    resolver, document.derivedUri.getAuthority());
-            Uri newUri = DocumentsContract.renameDocument(
-                    wrap(client), document.derivedUri, name);
-            return DocumentInfo.fromUri(resolver, newUri, document.userId);
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to rename file", e);
-            return null;
-        } finally {
-            FileUtils.closeQuietly(client);
-        }
     }
 
     @Override
@@ -207,25 +224,41 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
     }
 
     @Override
+    public void openShortcut(ShortcutInfo shortcut) {
+        mActivity.onShortcutPicked(shortcut);
+    }
+
+    @Override
     public boolean openItem(ItemDetails<String> details, @ViewType int type,
             @ViewType int fallback) {
+        Trace.beginSection("documentsui.files.ActionHandler#openItem");
         DocumentInfo doc = mModel.getDocument(details.getSelectionKey());
         if (doc == null) {
             Log.w(TAG, "Can't view item. No Document available for modeId: "
                     + details.getSelectionKey());
+            Trace.endSection();
             return false;
         }
         mInjector.searchManager.recordHistory();
 
-        return openDocument(doc, type, fallback);
+        boolean result = openDocument(doc, type, fallback);
+        Trace.endSection();
+        return result;
     }
 
     // TODO: Make this private and make tests call openDocument(DocumentDetails, int, int) instead.
     @VisibleForTesting
     public boolean openDocument(DocumentInfo doc, @ViewType int type, @ViewType int fallback) {
-        if (mConfig.isDocumentEnabled(doc.mimeType, doc.flags, mState)) {
+        // Opening an item in the trash root is not allowed.
+        if (mState.stack.isTrashRoot() && !doc.isDirectory()) {
+            showFileOpenFromTrashDialog(doc);
+            return false;
+        }
+        if (mConfig.isDocumentEnabled(doc, mState, mInjector.networkMonitor.isOnline())) {
             onDocumentOpened(doc, type, fallback, false);
-            mSelectionMgr.clearSelection();
+            if (!isUseMaterial3FlagEnabled()) {
+                mSelectionMgr.clearSelection();
+            }
             return !doc.isContainer();
         }
         return false;
@@ -248,18 +281,6 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
         openContainerDocument(doc);
     }
 
-    private Selection<String> getSelectedOrFocused() {
-        final MutableSelection<String> selection = this.getStableSelection();
-        if (selection.isEmpty()) {
-            String focusModelId = mFocusHandler.getFocusModelId();
-            if (focusModelId != null) {
-                selection.add(focusModelId);
-            }
-        }
-
-        return selection;
-    }
-
     @Override
     public void cutToClipboard() {
         Metrics.logUserAction(MetricConsts.USER_ACTION_CUT_CLIPBOARD);
@@ -274,9 +295,41 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
             return;
         }
 
-        mSelectionMgr.clearSelection();
+        if (isHomeScreenFilesFlagEnabled() || isSyncStateEnabled()) {
+            List<DocumentInfo> docs = mModel.getDocuments(selection);
+            if (docs == null || docs.isEmpty()) {
+                Log.e(TAG, "No documents available to cut.");
+                mDialogs.showOperationUnsupported();
+                return;
+            }
 
-        mClipper.clipDocumentsForCut(mModel::getItemUri, selection, mState.stack.peek());
+            List<Uri> uris = new ArrayList<>();
+            for (DocumentInfo doc : docs) {
+                if (isSyncStateEnabled()
+                        && !mInjector.config.isContentAvailable(
+                                doc, mState, mInjector.networkMonitor.isOnline())) {
+                    Log.e(TAG, "Document does not have available content to cut.");
+                    mDialogs.showOperationUnsupported();
+                    return;
+                }
+                if (isHomeScreenFilesFlagEnabled()) {
+                    uris.add(doc.derivedUri);
+                }
+            }
+
+            if (isHomeScreenFilesFlagEnabled()
+                    && blockOperationForShortcuts(uris, mActivity.getSelectedUser())) {
+                Log.e(TAG, "Failed to cut because a protected folder is selected.");
+                return;
+            }
+        }
+
+        if (!isUseMaterial3FlagEnabled()) {
+            mSelectionMgr.clearSelection();
+        }
+
+        mClipper.clipDocumentsForCut(
+                mModel::getItemUri, selection, mState.stack.peek(), mState.stack.isRecents());
 
         mDialogs.showDocumentsClipped(selection.size());
     }
@@ -289,11 +342,119 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
         if (selection.isEmpty()) {
             return;
         }
-        mSelectionMgr.clearSelection();
+
+        if (isSyncStateEnabled()) {
+            List<DocumentInfo> docs = mModel.getDocuments(selection);
+            if (docs == null || docs.isEmpty()) {
+                Log.e(TAG, "No documents available to copy.");
+                mDialogs.showOperationUnsupported();
+                return;
+            }
+
+            for (DocumentInfo doc : docs) {
+                if (!mInjector.config.isContentAvailable(
+                        doc, mState, mInjector.networkMonitor.isOnline())) {
+                    Log.e(TAG, "Document does not have available content to copy.");
+                    mDialogs.showOperationUnsupported();
+                    return;
+                }
+            }
+        }
+
+        if (!isUseMaterial3FlagEnabled()) {
+            mSelectionMgr.clearSelection();
+        }
 
         mClipper.clipDocumentsForCopy(mModel::getItemUri, selection);
 
         mDialogs.showDocumentsClipped(selection.size());
+    }
+
+    /** Base method for creating a share intent. */
+    private @Nullable Intent createShareIntentBase(Selection<String> selection) {
+        // Model must be accessed in UI thread, since underlying cursor is not thread safe.
+        List<DocumentInfo> docs =
+                mModel.loadDocuments(selection, DocumentFilters.sharable(mFeatures));
+
+        if (docs.size() < 1) {
+            return null;
+        }
+
+        Intent intent;
+        if (docs.size() == 1) {
+            intent = new Intent(Intent.ACTION_SEND);
+            DocumentInfo doc = docs.get(0);
+            intent.setDataAndType(doc.getDocumentUri(), doc.mimeType);
+            intent.putExtra(Intent.EXTRA_STREAM, doc.getDocumentUri());
+
+        } else {
+            intent = new Intent(Intent.ACTION_SEND_MULTIPLE);
+
+            final ArrayList<String> mimeTypes = new ArrayList<>();
+            final ArrayList<Uri> uris = new ArrayList<>();
+            for (DocumentInfo doc : docs) {
+                mimeTypes.add(doc.mimeType);
+                uris.add(doc.getDocumentUri());
+            }
+
+            intent.setType(MimeTypes.findCommonMimeType(mimeTypes));
+            intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+        }
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        if (mFeatures.isVirtualFilesSharingEnabled()
+                && mModel.hasDocuments(selection, DocumentFilters.VIRTUAL)) {
+            intent.addCategory(Intent.CATEGORY_TYPED_OPENABLE);
+        }
+
+        return intent;
+    }
+
+    /** Creates the intent for the Share menu. */
+    private @Nullable Intent createShareIntent(Selection<String> selection) {
+        Intent intent = createShareIntentBase(selection);
+        if (intent == null) {
+            return null;
+        }
+        intent.addCategory(Intent.CATEGORY_DEFAULT);
+        return intent;
+    }
+
+    /** Creates the intent for the Approved Doc Handler. */
+    @VisibleForTesting
+    public @Nullable Intent createApprovedHandlerIntent(Selection<String> selection) {
+        if (!isUseApprovedDocumentHandlerEnabled()) {
+            return null;
+        }
+        Intent intent = createShareIntentBase(selection);
+        if (intent == null) {
+            return null;
+        }
+        intent.addCategory(DocumentsContract.CATEGORY_APPROVED_DOCUMENT_HANDLER);
+
+        return intent;
+    }
+
+    @Override
+    public @Nullable Intent createApprovedHandlerIntent(ComponentName handler) {
+        if (!isUseApprovedDocumentHandlerEnabled()) {
+            return null;
+        }
+        Selection<String> selection = getSelectedOrFocused();
+        final Intent intent = createApprovedHandlerIntent(selection);
+
+        if (intent == null) {
+            if (DEBUG) {
+                Log.d(TAG, "Cannot send to approved document handler, intent is null");
+            }
+            return null;
+        }
+
+        intent.setComponent(handler);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (isDesktopFileHandlingFlagEnabled()) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
+        }
+        return intent;
     }
 
     @Override
@@ -318,21 +479,16 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
     }
 
     @Override
-    public void showDeleteDialog() {
+    public void trashSelectedDocuments() {
         Selection selection = getSelectedOrFocused();
         if (selection.isEmpty()) {
+            Log.e(TAG, "Cannot trash: Selection is empty");
             return;
         }
 
-        DeleteDocumentFragment.show(mActivity.getSupportFragmentManager(),
-                mModel.getDocuments(selection),
-                mState.stack.peek());
-    }
-
-
-    @Override
-    public void deleteSelectedDocuments(List<DocumentInfo> docs, DocumentInfo srcParent) {
+        List<DocumentInfo> docs = mModel.getDocuments(selection);
         if (docs == null || docs.isEmpty()) {
+            Log.e(TAG, "Cannot trash: Document list is empty");
             return;
         }
 
@@ -347,55 +503,17 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
             uris.add(doc.derivedUri);
         }
 
-        UrisSupplier srcs;
-        try {
-            srcs = UrisSupplier.create(
-                    uris,
-                    mClipStore);
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to delete a file because we were unable to get item URIs.", e);
-            mDialogs.showFileOperationStatus(
-                    FileOperations.Callback.STATUS_FAILED,
-                    FileOperationService.OPERATION_DELETE,
-                    uris.size());
+        if (isHomeScreenFilesFlagEnabled()
+                && blockOperationForShortcuts(uris, mActivity.getSelectedUser())) {
+            Log.e(TAG, "Cannot trash a protected folder");
             return;
-        }
-
-        FileOperation operation = new FileOperation.Builder()
-                .withOpType(FileOperationService.OPERATION_DELETE)
-                .withDestination(mState.stack)
-                .withSrcs(srcs)
-                .withSrcParent(srcParent == null ? null : srcParent.derivedUri)
-                .build();
-
-        FileOperations.start(mActivity, operation, mDialogs::showFileOperationStatus,
-                FileOperations.createJobId());
-    }
-
-    @Override
-    public void trashSelectedDocuments(List<DocumentInfo> docs) {
-        if (docs == null || docs.isEmpty()) {
-            return;
-        }
-
-        if (isUseMaterial3FlagEnabled()) {
-            mCloseSelectionBar.run();
-        } else {
-            mActionModeAddons.finishActionMode();
-        }
-
-        List<Uri> uris = new ArrayList<>(docs.size());
-        for (DocumentInfo doc : docs) {
-            uris.add(doc.derivedUri);
         }
 
         UrisSupplier srcs;
         try {
-            srcs = UrisSupplier.create(
-                    uris,
-                    mClipStore);
+            srcs = UrisSupplier.create(uris, mClipStore);
         } catch (Exception e) {
-            Log.e(TAG, "Failed to trash because we were unable to get item URIs.", e);
+            Log.e(TAG, "Cannot trash: Cannot get item URIs", e);
             mDialogs.showFileOperationStatus(
                     FileOperations.Callback.STATUS_FAILED,
                     FileOperationService.OPERATION_TRASH,
@@ -446,7 +564,6 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
 
         FileOperation operation = new FileOperation.Builder()
                 .withOpType(FileOperationService.OPERATION_RESTORE)
-                .withDestination(mState.stack)
                 .withSrcs(srcs)
                 .build();
 
@@ -466,46 +583,17 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
             return;
         }
 
-        // Model must be accessed in UI thread, since underlying cursor is not threadsafe.
-        List<DocumentInfo> docs = mModel.loadDocuments(
-                selection, DocumentFilters.sharable(mFeatures));
+        Intent intent = createShareIntent(selection);
 
-        Intent intent;
-
-        if (docs.size() == 1) {
-            intent = new Intent(Intent.ACTION_SEND);
-            DocumentInfo doc = docs.get(0);
-            intent.setDataAndType(doc.getDocumentUri(), doc.mimeType);
-            intent.putExtra(Intent.EXTRA_STREAM, doc.getDocumentUri());
-
-        } else if (docs.size() > 1) {
-            intent = new Intent(Intent.ACTION_SEND_MULTIPLE);
-
-            final ArrayList<String> mimeTypes = new ArrayList<>();
-            final ArrayList<Uri> uris = new ArrayList<>();
-            for (DocumentInfo doc : docs) {
-                mimeTypes.add(doc.mimeType);
-                uris.add(doc.getDocumentUri());
+        if (intent == null) {
+            if (DEBUG) {
+                Log.d(TAG, "Cannot share files, intent is null");
             }
-
-            intent.setType(MimeTypes.findCommonMimeType(mimeTypes));
-            intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
-
-        } else {
-            // Everything filtered out, nothing to share.
             return;
         }
 
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        intent.addCategory(Intent.CATEGORY_DEFAULT);
-
-        if (mFeatures.isVirtualFilesSharingEnabled()
-                && mModel.hasDocuments(selection, DocumentFilters.VIRTUAL)) {
-            intent.addCategory(Intent.CATEGORY_TYPED_OPENABLE);
-        }
-
-        Intent chooserIntent = Intent.createChooser(
-                intent, mActivity.getResources().getText(R.string.share_via));
+        Intent chooserIntent =
+                Intent.createChooser(intent, mActivity.getResources().getText(R.string.share_via));
 
         mActivity.startActivity(chooserIntent);
     }
@@ -568,6 +656,42 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
         loadHomeDir();
     }
 
+    @Override
+    public void showEmptyTrashConfirmationDialog() {
+        if (!mState.stack.isTrashTopLevel()) {
+            return;
+        }
+
+        // If there are no trash documents, don't show the dialog.
+        if (mModel.getModelIds().length == 0) {
+            return;
+        }
+
+        EmptyTrashDialogFragment.show(mActivity.getSupportFragmentManager());
+    }
+
+    @Override
+    public void permanentlyDeleteTrashDocuments() {
+        // If this is not the trash page then ignore.
+        if (!mState.stack.isTrashTopLevel()) {
+            return;
+        }
+
+        // Select all documents in the trash and then perform the permanent delete operation.
+        selectAllFiles();
+        Selection<String> selection = getSelectedOrFocused();
+        if (selection.isEmpty()) {
+            return;
+        }
+
+        List<DocumentInfo> docs = mModel.getDocuments(selection);
+        if (docs == null || docs.isEmpty()) {
+            return;
+        }
+
+        deleteSelectedDocuments(docs, /* srcParent */ null);
+    }
+
     // If EXTRA_STACK is not null in intent, we'll skip other means of loading
     // or restoring the stack (like URI).
     //
@@ -584,11 +708,24 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
             return false;
         }
 
-        if (stack.isEmpty()) {
-            mActivity.onRootPicked(stack.getRoot());
+        if (isHomeScreenFilesFlagEnabled()) {
+            ShortcutInfo shortcut = intent.getParcelableExtra(Shared.EXTRA_SELECTED_SHORTCUT);
+            if (stack.isEmpty() && shortcut == null) {
+                mActivity.onRootPicked(stack.getRoot());
+            } else if (stack.isEmpty()) {
+                mActivity.onShortcutPicked(shortcut);
+            } else {
+                mState.stack.reset(stack);
+                mState.shortcut = shortcut;
+                mActivity.refreshCurrentRootAndDirectory(AnimationView.ANIM_NONE);
+            }
         } else {
-            mState.stack.reset(stack);
-            mActivity.refreshCurrentRootAndDirectory(AnimationView.ANIM_NONE);
+            if (stack.isEmpty()) {
+                mActivity.onRootPicked(stack.getRoot());
+            } else {
+                mState.stack.reset(stack);
+                mActivity.refreshCurrentRootAndDirectory(AnimationView.ANIM_NONE);
+            }
         }
 
         return true;
@@ -624,14 +761,46 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
             Uri uri = intent.getData();
             if (DocumentsContract.isDocumentUri(mActivity, uri)) {
                 return launchToDocument(intent.getData());
+            } else if (isHomeScreenFilesFlagEnabled() && Providers.isMediaStoreUri(uri)) {
+                // It is possible that the intent comes from the launcher home screen for which we
+                // need to convert the URI from a MediaStore URI to a DocumentsUI URI.
+                Uri documentUri = mDocs.getDocumentUri(uri);
+                if (DocumentsContract.isDocumentUri(mActivity, documentUri)
+                        && Providers.isSystemProvider(documentUri.getAuthority())) {
+                    if (Objects.equals(intent.getType(), "application/zip")) {
+                        mToSelect = documentUri;
+                    }
+                    return launchToDocument(documentUri);
+                }
             }
         }
 
         return false;
     }
 
+    @VisibleForTesting
+    public Uri getToSelect() {
+        return mToSelect;
+    }
+
+    @Override
+    protected Uri getDefaultFallbackUri() {
+        Log.e(TAG, "Default Root URI is not a valid root URI, falling back to Downloads.");
+        return FlagUtils.isHomeScreenFilesFlagEnabled()
+                ? DocumentsContract.buildDocumentUri(
+                        Providers.AUTHORITY_STORAGE, Providers.DOWNLOAD_DOCUMENT_ID)
+                : DocumentsContract.buildRootUri(
+                        Providers.AUTHORITY_DOWNLOADS, Providers.ROOT_ID_DOWNLOADS);
+    }
+
     private boolean launchToDownloads(Intent intent) {
         if (DownloadManager.ACTION_VIEW_DOWNLOADS.equals(intent.getAction())) {
+            if (isHomeScreenFilesFlagEnabled()) {
+                Uri uri =
+                        DocumentsContract.buildDocumentUri(
+                                Providers.AUTHORITY_STORAGE, Providers.DOWNLOAD_DOCUMENT_ID);
+                return launchToDocument(uri);
+            }
             Uri uri = DocumentsContract.buildRootUri(Providers.AUTHORITY_DOWNLOADS,
                     Providers.ROOT_ID_DOWNLOADS);
             loadRoot(uri, UserId.DEFAULT_USER);
@@ -639,6 +808,24 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
         }
 
         return false;
+    }
+
+    /**
+     * Trashes the selected documents if the trash feature is enabled and all documents support it.
+     * Otherwise, it initiates the delete flow for the selected documents.
+     */
+    public void runDeleteOrTrashHandler() {
+        Selection<String> selection = getSelectedOrFocused();
+        if (selection.isEmpty()) {
+            return;
+        }
+
+        if (isTrashFlowEnabled()
+                && !mModel.hasDocuments(selection, DocumentFilters.NOT_SUPPORT_TRASH)) {
+            trashSelectedDocuments();
+        } else {
+            showDeleteDialog();
+        }
     }
 
     @Override
@@ -658,6 +845,9 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
             }
             intent.setComponent(
                     new ComponentName("android", "com.android.internal.app.ResolverActivity"));
+            if (isUseNewOpenWithEnabled()) {
+                intent.putExtra(Intent.EXTRA_AUTO_LAUNCH_SINGLE_CHOICE, false);
+            }
 
             try {
                 doc.userId.startActivityAsUser(mActivity, intent);
@@ -678,45 +868,18 @@ public class ActionHandler<T extends FragmentActivity & AbstractActionHandler.Co
 
     }
 
-    private void showInspector(DocumentInfo doc) {
-        Metrics.logUserAction(MetricConsts.USER_ACTION_INSPECTOR);
-        Intent intent = InspectorActivity.createIntent(mActivity, doc.derivedUri, doc.userId);
-
-        // permit the display of debug info about the file.
-        intent.putExtra(
-                Shared.EXTRA_SHOW_DEBUG,
-                mFeatures.isDebugSupportEnabled() &&
-                        (DEBUG || DebugFlags.getDocumentDetailsEnabled()));
-
-        // The "root document" (top level folder in a root) don't usually have a
-        // human friendly display name. That's because we've never shown the root
-        // folder's name to anyone.
-        // For that reason when the doc being inspected is the root folder,
-        // we override the displayName of the doc w/ the Root's name instead.
-        // The Root's name is shown to the user in the sidebar.
-        if (doc.isDirectory() && mState.stack.size() == 1 && mState.stack.get(0).equals(doc)) {
-            RootInfo root = mActivity.getCurrentRoot();
-            // Recents root title isn't defined, but inspector is disabled for recents root folder.
-            assert !TextUtils.isEmpty(root.title);
-            intent.putExtra(Intent.EXTRA_TITLE, root.title);
-        }
-        mActivity.startActivity(intent);
-    }
-
-    private void showPeek(DocumentInfo doc) {
-        if (mPeekViewManager == null) {
-            Log.e(TAG, "Attempting to show Peek when PeekViewManager is not defined");
+    private void showFileOpenFromTrashDialog(DocumentInfo doc) {
+        if (!mState.stack.isTrashRoot()) {
             return;
         }
-        mPeekViewManager.peekDocument(doc);
-    }
 
-    @Override
-    public void showPreview(DocumentInfo doc) {
-        if (isUsePeekPreviewFlagEnabled()) {
-            showPeek(doc);
-        } else {
-            showInspector(doc);
+        // Directory is allowed to open.
+        if (doc.isDirectory()) {
+            return;
         }
+
+        List<DocumentInfo> documentInfos = new ArrayList<>();
+        documentInfos.add(doc);
+        FileOpenFromTrashDialogFragment.show(mActivity.getSupportFragmentManager(), documentInfos);
     }
 }

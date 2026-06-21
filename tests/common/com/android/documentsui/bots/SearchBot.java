@@ -16,17 +16,21 @@
 
 package com.android.documentsui.bots;
 
+import static androidx.test.espresso.Espresso.closeSoftKeyboard;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.action.ViewActions.scrollTo;
 import static androidx.test.espresso.action.ViewActions.typeText;
-import static androidx.test.espresso.matcher.RootMatchers.isPlatformPopup;
+import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
+import static androidx.test.espresso.assertion.ViewAssertions.matches;
+import static androidx.test.espresso.matcher.ViewMatchers.doesNotHaveFocus;
 import static androidx.test.espresso.matcher.ViewMatchers.hasDescendant;
 import static androidx.test.espresso.matcher.ViewMatchers.isClickable;
 import static androidx.test.espresso.matcher.ViewMatchers.isDescendantOfA;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withContentDescription;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
+import static androidx.test.espresso.matcher.ViewMatchers.withResourceName;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
 import static com.android.documentsui.util.Material3Config.getRes;
@@ -38,12 +42,14 @@ import static junit.framework.Assert.assertTrue;
 import static org.hamcrest.CoreMatchers.allOf;
 import static org.hamcrest.CoreMatchers.anyOf;
 
+import android.annotation.LayoutRes;
 import android.content.Context;
 import android.view.View;
 
 import androidx.annotation.IdRes;
 import androidx.annotation.StringRes;
 import androidx.test.espresso.ViewInteraction;
+import androidx.test.espresso.contrib.RecyclerViewActions;
 import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.BySelector;
 import androidx.test.uiautomator.UiDevice;
@@ -73,8 +79,8 @@ public class SearchBot extends Bots.BaseBot {
             withId(R.id.option_menu_search),
             anyOf(isClickable(), hasDescendant(isClickable())));
 
-    public SearchBot(UiDevice device, Context context, int timeout) {
-        super(device, context, timeout);
+    public SearchBot(UiDevice device, Context context, long timeout, @LayoutRes Integer layoutId) {
+        super(device, context, timeout, layoutId);
     }
 
     /**
@@ -88,10 +94,13 @@ public class SearchBot extends Bots.BaseBot {
 
     public void expand() throws UiObjectNotFoundException {
         if (!showsDockedSearch()) {
-            UiObject searchView = findObject(mTargetPackage + ":id/option_menu_search");
-            searchView.click();
+            onView(SEARCH_WIDGET).perform(clickAndRetryOnLongPress());
         } else {
             findDockedSearchInput().click();
+        }
+        if (!showsDockedSearch()) {
+            BySelector selector = By.res(mTargetPackage + ":id/search_src_text").focused(true);
+            mDevice.wait(Until.findObject(selector), 5000);
         }
     }
 
@@ -173,6 +182,21 @@ public class SearchBot extends Bots.BaseBot {
         }
     }
 
+    /**
+     * Checks that search is in what we consider closed state. This handles both the docked and
+     * undocked cases.
+     */
+    public void assertSearchIsClosed() {
+        if (showsDockedSearch()) {
+            // We never "close" the docked search, but the query must be empty and not focused.
+            onView(withId(R.id.docked_search_text))
+                    .check(matches(allOf(withText(""), doesNotHaveFocus())));
+        } else {
+            // When search is not docked, the edit field must be hidden.
+            onView(withResourceName(mTargetPackage + ":id/search_src_text")).check(doesNotExist());
+        }
+    }
+
     public void assertInputEquals(String query)
             throws UiObjectNotFoundException {
         UiObject textField;
@@ -229,6 +253,9 @@ public class SearchBot extends Bots.BaseBot {
      * @return The view interaction corresponding to the chip with the given ID.
      */
     public ViewInteraction findChip(@StringRes int chipTextId) {
+        // In the drawer layout chips are not part of the fixed toolbar and can scroll away. Thus
+        // we need to scroll to the top of the view before we start looking for them.
+        onView(withId(R.id.dir_list)).perform(RecyclerViewActions.scrollToPosition(0));
         return onView(allOf(withText(chipTextId),
                 isDescendantOfA(withId(R.id.search_chip_group)))).perform(
                         new WaitUntilVisible(mTimeout)).perform(scrollTo());
@@ -264,23 +291,14 @@ public class SearchBot extends Bots.BaseBot {
     }
 
     /**
-     * Finds the menu item with text with the given ID. This method waits until the tem becomes
-     * visible, and scrolls to it so that it is fully displayed.
-     * @param menuId The ID of the text shown in the menu item.
-     * @return The view interaction associated with this menu item.
-     */
-    public ViewInteraction findMenuItem(@StringRes int menuId) {
-        return onView(withText(menuId)).inRoot(isPlatformPopup()).perform(
-                new WaitUntilVisible(mTimeout)).perform(scrollTo());
-    }
-
-    /**
-     * Clicks the menu item with text with the given ID. This method uses #findMenuItem to make sure
-     * that the menu item is visible and displayed.
+     * Clicks the menu item with text with the given ID. This method uses #findListMenuItem to make
+     * sure that the menu item is visible and displayed.
+     *
      * @param menuId The ID of the text shown in the menu item.
      */
     public void clickMenuItem(@StringRes int menuId) {
-        findMenuItem(menuId).perform(new RelaxedClickAction());
+        String menuLabel = mContext.getString(menuId);
+        mBots.menu.findListMenuItem(menuLabel).perform(new RelaxedClickAction());
     }
 
     /**
@@ -295,5 +313,21 @@ public class SearchBot extends Bots.BaseBot {
             onView(allOf(withContentDescription("Collapse"), isDescendantOfA(withId(R.id.toolbar))))
                     .perform(click());
         }
+    }
+
+    /**
+     * Performs a search with the given query. Note: do not use this function if the test case wants
+     * to assert the search input focus, because pressEnter() will make the search input lose focus.
+     */
+    public void doSearch(String query) throws UiObjectNotFoundException {
+        expand();
+        setInputText(query);
+        // Pressing enter is essential to save the search query to the search history.
+        mBots.keyboard.pressEnter();
+        // TODO(b/454187483): Revisit this after fixing the Enter key press issue for the docked
+        //  search bar.
+        // pressEnter() only hides the soft keyboard for drawer layout and nav rail layout (when
+        // docked search bar is not used), so we still need to explicitly close the keyboard here.
+        closeSoftKeyboard();
     }
 }

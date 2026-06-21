@@ -18,34 +18,26 @@ package com.android.documentsui.bots;
 
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
-import static androidx.test.espresso.action.ViewActions.swipeLeft;
-import static androidx.test.espresso.action.ViewActions.swipeRight;
-import static androidx.test.espresso.matcher.ViewMatchers.isDescendantOfA;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
-import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
-import static junit.framework.Assert.assertNotNull;
+import static junit.framework.Assert.assertFalse;
 import static junit.framework.Assert.assertTrue;
 
-import static org.hamcrest.Matchers.allOf;
-
+import android.annotation.LayoutRes;
 import android.app.UiAutomation;
 import android.content.Context;
-import android.graphics.Rect;
 import android.os.SystemClock;
-import android.util.Log;
-import android.view.MotionEvent;
-import android.view.View;
 
-import androidx.test.espresso.ViewInteraction;
+import androidx.test.espresso.contrib.DrawerActions;
+import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject;
+import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.UiObjectNotFoundException;
 import androidx.test.uiautomator.UiScrollable;
 import androidx.test.uiautomator.UiSelector;
 
 import com.android.documentsui.R;
-import com.android.documentsui.actions.RelaxedClickAction;
 
 import junit.framework.Assert;
 import junit.framework.AssertionFailedError;
@@ -63,19 +55,48 @@ public class SidebarBot extends Bots.BaseBot {
 
     private final String mRootListId;
     private final UiAutomation mAutomation;
-    private final UiBot mUiBot;
+
+    /**
+     * Root list exists in both drawer and navigation rail. With this enum the
+     * consumer can decide which container to use to find the root list:
+     *  FOLLOW_LAYOUT: use nav rail in navigation rail layout, otherwise use drawer.
+     *  FORCE_DRAWER: always use drawer, in fixed layout it uses the fixed navigation side bar, in
+     *          drawer layout and navigation rail layout, it uses the drawer.
+     *  FORCE_NAV_RAIL: use nav rail in navigation rail layout, navigation rail layout has both the
+     *            nav rail and the drawer, this will force it to use the nav rail.
+     */
+    private enum RootListContainerType {
+        FOLLOW_LAYOUT,
+        FORCE_DRAWER,
+        FORCE_NAV_RAIL
+    }
 
     public SidebarBot(
-            UiDevice device, UiAutomation automation, Context context, UiBot uiBot, int timeout) {
-        super(device, context, timeout);
+            UiDevice device,
+            UiAutomation automation,
+            Context context,
+            long timeout,
+            @LayoutRes Integer layoutId) {
+        super(device, context, timeout, layoutId);
         mAutomation = automation;
-        mUiBot = uiBot;
         mRootListId = mTargetPackage + ":id/roots_list";
     }
 
-    private UiSelector getRootsContainerSelector() {
-        final String containerId =
-                this.inNavRailLayout() ? ":id/nav_rail_container_roots" : ":id/container_roots";
+    private UiSelector getRootsContainerSelector(RootListContainerType containerType) {
+        String containerId;
+        switch (containerType) {
+            case FORCE_DRAWER:
+                containerId = ":id/container_roots";
+                break;
+            case FORCE_NAV_RAIL:
+                containerId = ":id/nav_rail_container_roots";
+                break;
+            default:
+                containerId =
+                        this.inNavRailLayout()
+                                ? ":id/nav_rail_container_roots"
+                                : ":id/container_roots";
+        }
         return new UiSelector()
                 .resourceId(mTargetPackage + containerId)
                 .childSelector(new UiSelector().resourceId(mRootListId));
@@ -83,21 +104,26 @@ public class SidebarBot extends Bots.BaseBot {
 
     private boolean toolbarHasTitle(String title) {
         try {
-            mUiBot.assertWindowTitle(title);
+            mBots.main.assertWindowTitle(title);
             return true;
         } catch (AssertionFailedError e) {
             return false;
         }
     }
 
-    private UiObject findRoot(String label) throws UiObjectNotFoundException {
+    private UiObject findRoot(String label, RootListContainerType containerType)
+            throws UiObjectNotFoundException {
         // We might need to expand drawer if not visible.
         openDrawer();
 
-        final UiSelector rootsList = getRootsContainerSelector();
+        final UiSelector rootsList = getRootsContainerSelector(containerType);
 
         // Wait for the first list item to appear.
-        new UiObject(rootsList.childSelector(new UiSelector())).waitForExists(mTimeout);
+        boolean exists =
+                new UiObject(rootsList.childSelector(new UiSelector())).waitForExists(mTimeout);
+        if (!exists) {
+            throw new UiObjectNotFoundException("First list item not found after timeout");
+        }
 
         // Now scroll around to find our item.
         new UiScrollable(rootsList).scrollIntoView(new UiSelector().text(label));
@@ -108,13 +134,20 @@ public class SidebarBot extends Bots.BaseBot {
         return new UiObject(rootsList.childSelector(new UiSelector().text(label)));
     }
 
+    /** Finds the root with the given label. */
+    public UiObject findRoot(String label) throws UiObjectNotFoundException {
+        return findRoot(label, RootListContainerType.FOLLOW_LAYOUT);
+    }
+
     /** Open navigation root either from the Drawer or the Navigation rail. */
     public void openRoot(String label) throws UiObjectNotFoundException {
         if (toolbarHasTitle(label)) {
             return;
         }
-        assertTrue("Failed to click on root: " + label, findRoot(label).click());
-        mUiBot.assertWindowTitle(label);
+        assertTrue(
+                "Failed to click on root: " + label,
+                findRoot(label, RootListContainerType.FOLLOW_LAYOUT).click());
+        mBots.main.assertWindowTitle(label);
     }
 
     /**
@@ -122,14 +155,13 @@ public class SidebarBot extends Bots.BaseBot {
      * only use openNavRailRoot if you want to open root explicitly from the navigation rail.
      */
     public void openNavRailRoot(String label) throws UiObjectNotFoundException {
-        // Use UiScrollable to scroll into the view.
-        final UiSelector rootsList = getRootsContainerSelector();
-        new UiObject(rootsList.childSelector(new UiSelector())).waitForExists(mTimeout);
-        new UiScrollable(rootsList).scrollIntoView(new UiSelector().text(label));
-
-        // Use Espresso to click.
-        onView(allOf(withText(label), isDescendantOfA(withId(R.id.nav_rail_container_roots))))
-                .perform(click());
+        if (toolbarHasTitle(label)) {
+            return;
+        }
+        assertTrue(
+                "Failed to click on nav rail root: " + label,
+                findRoot(label, RootListContainerType.FORCE_NAV_RAIL).click());
+        mBots.main.assertWindowTitle(label);
     }
 
     /** Open navigation drawer from the burger menu button within the navigation rail layout. */
@@ -137,6 +169,10 @@ public class SidebarBot extends Bots.BaseBot {
         onView(withId(R.id.nav_rail_burger_menu)).perform(click());
     }
 
+    /**
+     * Drawer can be open for both drawer layout and navigation rail layout, but this method only
+     * opens drawer for the drawer layout.
+     */
     public void openDrawer() throws UiObjectNotFoundException {
         // In drawer layout we explicitly open the drawer by clicking the burger menu in the
         // toolbar, in other layouts we do nothing because the nav sidebar is shown by default.
@@ -158,31 +194,26 @@ public class SidebarBot extends Bots.BaseBot {
         hamburgerButton.click();
 
         // Wait for the roots to appear and fail if it doesn't.
-        assertTrue(mDevice.findObject(getRootsContainerSelector()).waitForExists(mTimeout));
+        assertTrue(
+                mDevice.findObject(getRootsContainerSelector(RootListContainerType.FORCE_DRAWER))
+                        .waitForExists(mTimeout));
     }
 
+    /** Attempt to close the drawer. */
     public void closeDrawer() {
-        // Espresso will try to close the drawer if it's opened
-        // But if no drawer exists (Tablet devices), we will have to catch the exception
-        // and continue on the test
-        // Why can't we do something like .exist() first?
-        // http://stackoverflow.com/questions/20807131/espresso-return-boolean-if-view-exists
-        try {
-            if (mContext.getResources().getConfiguration()
-                    .getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
-                onView(withId(R.id.drawer_layout)).perform(swipeRight());
-            } else {
-                onView(withId(R.id.drawer_layout)).perform(swipeLeft());
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Cannot close drawer", e);
+        // mLayoutId is null when it's not a FileActivity/PickerActivity.
+        if (mLayoutId == null || inFixedLayout()) {
+            // Not a layout with a drawer.
+            return;
         }
+        // Attempt to close the drawer if it's open.
+        onView(withId(R.id.drawer_layout)).perform(DrawerActions.close());
     }
 
     public void assertRootsPresent(String... labels) throws UiObjectNotFoundException {
         List<String> missing = new ArrayList<>();
         for (String label : labels) {
-            if (!findRoot(label).exists()) {
+            if (!findRoot(label, RootListContainerType.FOLLOW_LAYOUT).exists()) {
                 missing.add(label);
             }
         }
@@ -195,7 +226,7 @@ public class SidebarBot extends Bots.BaseBot {
     public void assertRootsAbsent(String... labels) throws UiObjectNotFoundException {
         List<String> unexpected = new ArrayList<>();
         for (String label : labels) {
-            if (findRoot(label).exists()) {
+            if (findRoot(label, RootListContainerType.FOLLOW_LAYOUT).exists()) {
                 unexpected.add(label);
             }
         }
@@ -208,41 +239,33 @@ public class SidebarBot extends Bots.BaseBot {
         assertHasFocus(mRootListId);
     }
 
-    /** Right clicks a root with `label` and then clicks the `menuOption`. */
-    public void rightClickRootAndClickMenuOption(String rootLabel, String menuOption)
-            throws UiObjectNotFoundException {
-        Rect point = findRoot(rootLabel).getVisibleBounds();
+    /** Returns whether a root is focused. */
+    public boolean anyRootHasFocus() {
+        UiObject2 list = mDevice.findObject(By.res(mRootListId));
+        return (list != null) && (list.findObject(By.focused(true)) != null);
+    }
 
-        // The RootsFragment listens to right clicks in the GenericMotionListener. This is to allow
-        // for a left and right click to be used interchangeably. This means to mock this behaviour,
-        // 4 input events needs to be synthesized. A down, button press, button release and an up.
-        MotionEvent motionDown =
-                getTestRightClickMotionEvent(
-                        MotionEvent.ACTION_DOWN, point.centerX(), point.centerY());
-        mAutomation.injectInputEvent(motionDown, true);
-        SystemClock.sleep(25);
+    /**
+     * Check if the labelled item is selected on the sidebar.
+     */
+    public void assertItemSelected(String label) throws UiObjectNotFoundException {
+        UiObject sidebarItem = findRoot(label, RootListContainerType.FOLLOW_LAYOUT);
+        if (!sidebarItem.exists()) {
+            throw new AssertionError("Cannot find item " + label);
+        }
+        assertTrue(sidebarItem.isSelected());
+        closeDrawer();
+    }
 
-        MotionEvent motionButtonPress =
-                getTestRightClickMotionEvent(
-                        MotionEvent.ACTION_BUTTON_PRESS, point.centerX(), point.centerY());
-        mAutomation.injectInputEvent(motionButtonPress, true);
-        SystemClock.sleep(25);
-
-        MotionEvent motionButtonRelease =
-                getTestRightClickMotionEvent(
-                        MotionEvent.ACTION_BUTTON_RELEASE, point.centerX(), point.centerY());
-        mAutomation.injectInputEvent(motionButtonRelease, true);
-        SystemClock.sleep(25);
-
-        MotionEvent motionUp =
-                getTestRightClickMotionEvent(
-                        MotionEvent.ACTION_UP, point.centerX(), point.centerY());
-        mAutomation.injectInputEvent(motionUp, true);
-
-        mDevice.waitForIdle();
-
-        ViewInteraction menuItem = waitForContextMenuItemToAppear(menuOption);
-        assertNotNull("Context menu item " + menuOption + " not found", menuItem);
-        menuItem.perform(new RelaxedClickAction());
+    /**
+     * Check if the labelled item is not selected on the sidebar.
+     */
+    public void assertItemNotSelected(String label) throws UiObjectNotFoundException {
+        UiObject sidebarItem = findRoot(label, RootListContainerType.FOLLOW_LAYOUT);
+        if (!sidebarItem.exists()) {
+            throw new AssertionError("Cannot find item " + label);
+        }
+        assertFalse(sidebarItem.isSelected());
+        closeDrawer();
     }
 }

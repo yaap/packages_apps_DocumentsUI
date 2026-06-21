@@ -22,8 +22,11 @@ import static androidx.test.espresso.matcher.RootMatchers.isPlatformPopup;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
+import static com.android.documentsui.util.FlagUtils.isDesktopUxPhase2FlagEnabled;
+
 import static junit.framework.Assert.assertNotNull;
 
+import android.annotation.LayoutRes;
 import android.app.UiAutomation;
 import android.content.Context;
 import android.os.SystemClock;
@@ -44,6 +47,7 @@ import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.UiSelector;
 import androidx.test.uiautomator.Until;
 
+import com.android.documentsui.R;
 import com.android.documentsui.actions.DoNothingAction;
 import com.android.documentsui.utils.LayoutUtilsKt;
 
@@ -54,8 +58,14 @@ import org.hamcrest.Matcher;
 /** Handy collection of bots for working with Files app. */
 public final class Bots {
 
+    @FunctionalInterface
+    public interface NavigateToDestinationRunnable {
+        /** Handles the navigation to the Copy/Cut or Copy to/Move to destination. */
+        void run() throws Exception;
+    }
+
     private static final String TAG = "Bots";
-    private static final int TIMEOUT = 15000;
+    private static final long TIMEOUT = 15000L;
 
     public final BreadBot breadcrumb;
     public final DirectoryListBot directory;
@@ -69,20 +79,43 @@ public final class Bots {
     public final InspectorBot inspector;
     public final NotificationsBot notifications;
     public final PickerBot picker;
+    public final NavigationBot navigation;
 
-    public Bots(UiDevice device, UiAutomation automation, Context context, int timeout) {
-        main = new UiBot(device, context, TIMEOUT);
-        breadcrumb = new BreadBot(device, context, TIMEOUT);
-        roots = new SidebarBot(device, automation, context, main, TIMEOUT);
-        directory = new DirectoryListBot(device, automation, context, TIMEOUT);
-        sort = new SortBot(device, context, TIMEOUT, main);
-        keyboard = new KeyboardBot(device, context, TIMEOUT);
-        search = new SearchBot(device, context, TIMEOUT);
-        gesture = new GestureBot(device, automation, context, TIMEOUT);
-        menu = new MenuBot(device, context, TIMEOUT);
-        inspector = new InspectorBot(device, context, TIMEOUT);
-        notifications = new NotificationsBot(device, context, TIMEOUT);
-        picker = new PickerBot(device, context, TIMEOUT);
+    public Bots(
+            UiDevice device,
+            UiAutomation automation,
+            Context context,
+            long timeout,
+            @LayoutRes Integer layoutId) {
+        main = new UiBot(device, context, TIMEOUT, layoutId);
+        breadcrumb = new BreadBot(device, context, TIMEOUT, layoutId);
+        roots = new SidebarBot(device, automation, context, TIMEOUT, layoutId);
+        directory = new DirectoryListBot(device, automation, context, TIMEOUT, layoutId);
+        sort = new SortBot(device, context, TIMEOUT, layoutId);
+        keyboard = new KeyboardBot(device, context, TIMEOUT, layoutId);
+        search = new SearchBot(device, context, TIMEOUT, layoutId);
+        gesture = new GestureBot(device, automation, context, TIMEOUT, layoutId);
+        menu = new MenuBot(device, context, TIMEOUT, layoutId);
+        inspector = new InspectorBot(device, context, TIMEOUT, layoutId);
+        notifications = new NotificationsBot(device, context, TIMEOUT, layoutId);
+        picker = new PickerBot(device, context, TIMEOUT, layoutId);
+        navigation = new NavigationBot(device, context, TIMEOUT, layoutId);
+
+        // Set the Bots instance to each sub bot so inside each sub bot they can access other sub
+        // bot.
+        main.setBots(this);
+        breadcrumb.setBots(this);
+        roots.setBots(this);
+        directory.setBots(this);
+        sort.setBots(this);
+        keyboard.setBots(this);
+        search.setBots(this);
+        gesture.setBots(this);
+        menu.setBots(this);
+        inspector.setBots(this);
+        notifications.setBots(this);
+        picker.setBots(this);
+        navigation.setBots(this);
     }
 
     /**
@@ -93,15 +126,27 @@ public final class Bots {
         public final UiDevice mDevice;
         public final String mTargetPackage;
         final Context mContext;
-        final int mTimeout;
+        final long mTimeout;
+        @LayoutRes protected Integer mLayoutId;
+        public Bots mBots;
 
-        BaseBot(UiDevice device, Context context, int timeout) {
+        BaseBot(UiDevice device, Context context, long timeout, @LayoutRes Integer layoutId) {
             mDevice = device;
             mContext = context;
             mTimeout = timeout;
             mTargetPackage =
                     InstrumentationRegistry.getInstrumentation()
                             .getTargetContext().getPackageName();
+            mLayoutId = layoutId;
+        }
+
+        /**
+         * Set the main bots so all sub class has access to it.
+         *
+         * @param bots the Bots instance
+         */
+        public void setBots(Bots bots) {
+            mBots = bots;
         }
 
         /**
@@ -185,6 +230,46 @@ public final class Bots {
             return mDevice.findObject(selector);
         }
 
+        /**
+         * Attempts to find any of the given selectors, retrying until timeout.
+         *
+         * @param selectors The selectors to search for.
+         * @return An array of UiObject2, with each element corresponding to the selector at the
+         *     same index in the input array. If a selector is not found, the corresponding element
+         *     in the result array will be null.
+         */
+        protected UiObject2[] findAny(BySelector[] selectors) {
+            int n = selectors.length;
+            UiObject2[] result = new UiObject2[n];
+            if (n > 0) {
+                long remaining = mTimeout;
+                // 1048576 is (1 << 20), a power of two close to one million. The value is
+                // basically arbitrary. We just want our sleeps to start as a small fraction of
+                // mTimeout, but double in length each iteration.
+                long retryTimeout = mTimeout / 1048576;
+                if (retryTimeout < 1) {
+                    retryTimeout = 1L;
+                }
+                for (int retry = 0; true; retry++) {
+                    mDevice.wait(Until.findObject(selectors[retry % n]), retryTimeout);
+                    boolean found = false;
+                    for (int j = 0; j < n; j++) {
+                        result[j] = mDevice.findObject(selectors[j]);
+                        found = found || (result[j] != null);
+                    }
+                    remaining -= retryTimeout;
+                    retryTimeout *= 2;
+                    if ((retryTimeout > remaining) || (retryTimeout <= 0)) {
+                        retryTimeout = remaining;
+                    }
+                    if (found || (remaining <= 0)) {
+                        break;
+                    }
+                }
+            }
+            return result;
+        }
+
         protected UiObject findObject(String resourceId) {
             final UiSelector object = new UiSelector().resourceId(resourceId);
             return mDevice.findObject(object);
@@ -249,17 +334,74 @@ public final class Bots {
 
         /** Check if the app is running in fixed_layout. */
         public boolean inFixedLayout() {
-            return LayoutUtilsKt.inFixedLayout(mContext);
+            return LayoutUtilsKt.inFixedLayout(mContext, mLayoutId);
         }
 
         /** Check if the app is running in nav_rail_layout. */
         public boolean inNavRailLayout() {
-            return LayoutUtilsKt.inNavRailLayout(mContext);
+            return LayoutUtilsKt.inNavRailLayout(mContext, mLayoutId);
         }
 
         /** Check if the app is running in drawer_layout. */
         public boolean inDrawerLayout() {
-            return LayoutUtilsKt.inDrawerLayout(mContext);
+            return LayoutUtilsKt.inDrawerLayout(mContext, mLayoutId);
+        }
+
+        /**
+         * Indicates if the Copy/Cut menu should be used instead of "Copy to" and "Move to" menus.
+         */
+        public boolean isUseCopyCutFlow() {
+            final boolean showCopyToMoveToConfigValue =
+                    mContext.getResources().getBoolean(R.bool.show_copy_to_move_to_menus);
+            return isDesktopUxPhase2FlagEnabled() && !showCopyToMoveToConfigValue;
+        }
+
+        /**
+         * Do the copy process, cater for both "Copy/Paste" flow and "Copy to" dialog flow.
+         *
+         * @param navigateToDestination function to navigation to the copy destination folder.
+         */
+        public void doCopy(NavigateToDestinationRunnable navigateToDestination) throws Exception {
+            if (isUseCopyCutFlow()) {
+                mBots.main.clickActionbarOverflowItem(
+                        mContext.getResources().getString(R.string.menu_copy_to_clipboard));
+            } else {
+                mBots.main.clickActionbarOverflowItem(
+                        mContext.getResources().getString(R.string.menu_copy));
+            }
+            mDevice.waitForIdle();
+            navigateToDestination.run();
+            if (isUseCopyCutFlow()) {
+                mBots.main.clickToolbarOverflowItem(
+                        mContext.getResources().getString(R.string.menu_paste_from_clipboard));
+            } else {
+                mBots.main.clickDialogOkButton(/* closeSoftKeyboard */ false);
+            }
+            mDevice.waitForIdle();
+        }
+
+        /**
+         * Do the move process, cater for both "Cut/Paste" flow and "Move to" dialog flow.
+         *
+         * @param navigateToDestination function to navigation to the move destination folder.
+         */
+        public void doMove(NavigateToDestinationRunnable navigateToDestination) throws Exception {
+            if (isUseCopyCutFlow()) {
+                mBots.main.clickActionbarOverflowItem(
+                        mContext.getResources().getString(R.string.menu_cut_to_clipboard));
+            } else {
+                mBots.main.clickActionbarOverflowItem(
+                        mContext.getResources().getString(R.string.menu_move));
+            }
+            mDevice.waitForIdle();
+            navigateToDestination.run();
+            if (isUseCopyCutFlow()) {
+                mBots.main.clickToolbarOverflowItem(
+                        mContext.getResources().getString(R.string.menu_paste_from_clipboard));
+            } else {
+                mBots.main.clickDialogOkButton(/* closeSoftKeyboard */ false);
+            }
+            mDevice.waitForIdle();
         }
     }
 }

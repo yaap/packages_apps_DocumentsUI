@@ -48,6 +48,7 @@ import androidx.fragment.app.FragmentManager;
 import androidx.recyclerview.selection.ItemDetailsLookup.ItemDetails;
 
 import com.android.documentsui.AbstractActionHandler;
+import com.android.documentsui.ActionModeAddons;
 import com.android.documentsui.ActivityConfig;
 import com.android.documentsui.DocumentsAccess;
 import com.android.documentsui.Injector;
@@ -61,14 +62,18 @@ import com.android.documentsui.base.Lookup;
 import com.android.documentsui.base.Providers;
 import com.android.documentsui.base.RootInfo;
 import com.android.documentsui.base.Shared;
+import com.android.documentsui.base.ShortcutInfo;
 import com.android.documentsui.base.State;
 import com.android.documentsui.base.UserId;
+import com.android.documentsui.clipping.ClipStore;
 import com.android.documentsui.dirlist.AnimationView;
+import com.android.documentsui.peek.PeekViewManager;
 import com.android.documentsui.picker.ActionHandler.Addons;
 import com.android.documentsui.queries.SearchViewManager;
 import com.android.documentsui.roots.ProvidersAccess;
 import com.android.documentsui.services.FileOperationService;
 import com.android.documentsui.util.FileUtils;
+import com.android.documentsui.util.FlagUtils;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -76,10 +81,8 @@ import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.regex.Pattern;
 
-/**
- * Provides {@link PickActivity} action specializations to fragments.
- */
-class ActionHandler<T extends FragmentActivity & Addons> extends AbstractActionHandler<T> {
+/** Provides {@link PickActivity} action specializations to fragments. */
+public class ActionHandler<T extends FragmentActivity & Addons> extends AbstractActionHandler<T> {
 
     private static final String TAG = "PickerActionHandler";
 
@@ -110,8 +113,23 @@ class ActionHandler<T extends FragmentActivity & Addons> extends AbstractActionH
             SearchViewManager searchMgr,
             Lookup<String, Executor> executors,
             Injector injector,
-            LastAccessedStorage lastAccessed) {
-        super(activity, state, providers, docs, searchMgr, executors, injector);
+            LastAccessedStorage lastAccessed,
+            @Nullable PeekViewManager peekViewManager,
+            @Nullable ActionModeAddons actionModeAddons,
+            Runnable closeSelectionBar,
+            ClipStore clipStore) {
+        super(
+                activity,
+                state,
+                providers,
+                docs,
+                searchMgr,
+                executors,
+                injector,
+                peekViewManager,
+                actionModeAddons,
+                closeSelectionBar,
+                clipStore);
 
         mConfig = injector.config;
         mFeatures = injector.features;
@@ -162,7 +180,7 @@ class ActionHandler<T extends FragmentActivity & Addons> extends AbstractActionH
     private boolean launchHomeForCopyDestination(Intent intent) {
         // As a matter of policy we don't load the last used stack for the copy
         // destination picker (user is already in Files app).
-        // Consensus was that the experice was too confusing.
+        // Consensus was that the experience was too confusing.
         // In all other cases, where the user is visiting us from another app
         // we restore the stack as last used from that app.
         if (Shared.ACTION_PICK_COPY_DESTINATION.equals(intent.getAction())) {
@@ -200,6 +218,20 @@ class ActionHandler<T extends FragmentActivity & Addons> extends AbstractActionH
         }
 
         return launchToDocument(initialUri);
+    }
+
+    @Override
+    protected Uri getDefaultFallbackUri() {
+        if (FlagUtils.isHomeScreenFilesFlagEnabled()) {
+            Log.e(
+                    TAG,
+                    "Default Root URI is not a valid root URI, falling back to primary storage.");
+            return DocumentsContract.buildRootUri(
+                    Providers.AUTHORITY_STORAGE, Providers.ROOT_ID_DEVICE);
+        }
+        Log.e(TAG, "Default Root URI is not a valid root URI, falling back to Downloads.");
+        return DocumentsContract.buildRootUri(
+                Providers.AUTHORITY_DOWNLOADS, Providers.ROOT_ID_DOWNLOADS);
     }
 
     /**
@@ -339,7 +371,7 @@ class ActionHandler<T extends FragmentActivity & Addons> extends AbstractActionH
     }
 
     @Override
-    public void openInNewWindow(DocumentStack path) {
+    public void openInNewWindow(DocumentStack path, ShortcutInfo shortcut) {
         // Open new window support only depends on vanilla Activity, so it is
         // implemented in our parent class. But we don't support that in
         // picking. So as a matter of defensiveness, we override that here.
@@ -391,6 +423,11 @@ class ActionHandler<T extends FragmentActivity & Addons> extends AbstractActionH
         }
     }
 
+    @Override
+    public void openShortcut(ShortcutInfo shortcut) {
+        mInjector.pickResult.increaseActionCount();
+        mActivity.onShortcutPicked(shortcut);
+    }
 
     @Override
     public void springOpenDirectory(DocumentInfo doc) {
@@ -407,7 +444,7 @@ class ActionHandler<T extends FragmentActivity & Addons> extends AbstractActionH
             return false;
         }
 
-        if (mConfig.isDocumentEnabled(doc.mimeType, doc.flags, mState)) {
+        if (mConfig.isDocumentEnabled(doc, mState, mInjector.networkMonitor.isOnline())) {
             mActivity.onDocumentPicked(doc);
             mSelectionMgr.clearSelection();
             return !doc.isDirectory();
@@ -583,6 +620,41 @@ class ActionHandler<T extends FragmentActivity & Addons> extends AbstractActionH
         } else {
             return AsyncTask.THREAD_POOL_EXECUTOR;
         }
+    }
+
+    @Override
+    public void showPreview(DocumentInfo doc) {
+        if (isUseMaterial3FlagEnabled()) {
+            super.showPreview(doc);
+        } else {
+            throw new UnsupportedOperationException("Can't open properties.");
+        }
+    }
+
+    @Override
+    public void showDeleteDialog() {
+        if (isUseMaterial3FlagEnabled()) {
+            super.showDeleteDialog();
+        } else {
+            throw new UnsupportedOperationException("Delete not supported!");
+        }
+    }
+
+    @Override
+    public void deleteSelectedDocuments(List<DocumentInfo> docs, DocumentInfo srcParent) {
+        if (isUseMaterial3FlagEnabled()) {
+            super.deleteSelectedDocuments(docs, srcParent);
+        } else {
+            throw new UnsupportedOperationException("Delete not supported!");
+        }
+    }
+
+    @Override
+    public @Nullable DocumentInfo renameDocument(String name, DocumentInfo document) {
+        if (isUseMaterial3FlagEnabled()) {
+            return super.renameDocument(name, document);
+        }
+        throw new UnsupportedOperationException("Can't rename documents.");
     }
 
     public interface Addons extends CommonAddons {

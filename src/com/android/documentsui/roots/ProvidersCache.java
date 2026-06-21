@@ -23,8 +23,9 @@ import static androidx.core.util.Preconditions.checkNotNull;
 import static com.android.documentsui.base.Providers.TRASH_ROOT_ID;
 import static com.android.documentsui.base.SharedMinimal.DEBUG;
 import static com.android.documentsui.base.SharedMinimal.VERBOSE;
-import static com.android.documentsui.util.Material3Config.getRes;
+import static com.android.documentsui.util.FlagUtils.isHomeScreenFilesFlagEnabled;
 import static com.android.documentsui.util.FlagUtils.isTrashFlowEnabled;
+import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.content.BroadcastReceiver.PendingResult;
 import android.content.ContentProviderClient;
@@ -35,6 +36,8 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
+import android.content.res.Configuration;
+import android.content.res.TypedArray;
 import android.database.ContentObserver;
 import android.database.Cursor;
 import android.net.Uri;
@@ -51,6 +54,7 @@ import android.util.Log;
 import androidx.annotation.GuardedBy;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import com.android.documentsui.DocumentsApplication;
@@ -60,6 +64,7 @@ import com.android.documentsui.archives.ArchivesProvider;
 import com.android.documentsui.base.LookupApplicationName;
 import com.android.documentsui.base.Providers;
 import com.android.documentsui.base.RootInfo;
+import com.android.documentsui.base.ShortcutInfo;
 import com.android.documentsui.base.State;
 import com.android.documentsui.base.UserId;
 import com.android.modules.utils.build.SdkLevel;
@@ -73,6 +78,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
@@ -123,7 +129,15 @@ public class ProvidersCache implements ProvidersAccess, LookupApplicationName {
     @GuardedBy("mLock")
     private Multimap<UserAuthority, RootInfo> mRoots = ArrayListMultimap.create();
     @GuardedBy("mLock")
+    private Multimap<UserId, ShortcutInfo> mShortcuts = ArrayListMultimap.create();
+    @GuardedBy("mLock")
     private HashSet<UserAuthority> mStoppedAuthorities = new HashSet<>();
+
+    @GuardedBy("mLock")
+    private List<ShortcutResourceValues> mShortcutResources = new ArrayList<>();
+
+    @GuardedBy("mLock")
+    private boolean mShortcutResourcesFirstLoadDone = false;
     private final Semaphore mMultiProviderUpdateTaskSemaphore = new Semaphore(1);
 
     @GuardedBy("mObservedAuthoritiesDetails")
@@ -131,6 +145,33 @@ public class ProvidersCache implements ProvidersAccess, LookupApplicationName {
 
     public ProvidersCache(Context context) {
         mContext = context;
+    }
+
+    /**
+     * Used for testing - sets the mRoots to unit test other methods.
+     * @param roots - the document provider roots.
+     */
+    @VisibleForTesting
+    public void setRoots(List<RootInfo> roots) {
+        synchronized (mLock) {
+            mRoots.clear();
+            for (RootInfo root : roots) {
+                UserAuthority userAuthority = new UserAuthority(root.userId, root.authority);
+                mRoots.put(userAuthority, root);
+            }
+        }
+    }
+
+    /**
+     * Used for testing - sets the mRoots and mShortcutResources to unit test other methods.
+     *
+     * @param shortcutResources - the shortcut resources.
+     */
+    @VisibleForTesting
+    public void setShortcutResources(List<ShortcutResourceValues> shortcutResources) {
+        synchronized (mLock) {
+            mShortcutResources = shortcutResources;
+        }
     }
 
     /**
@@ -168,7 +209,7 @@ public class ProvidersCache implements ProvidersAccess, LookupApplicationName {
             {
                 // Special root for trash
                 userId = rootUserId;
-                derivedIcon = getRes(R.drawable.ic_menu_delete);
+                derivedIcon = getRes(R.drawable.ic_root_trash);
                 derivedType = RootInfo.TYPE_TRASH;
                 rootId = TRASH_ROOT_ID;
                 flags = Root.FLAG_LOCAL_ONLY | Root.FLAG_SUPPORTS_IS_CHILD;
@@ -237,22 +278,21 @@ public class ProvidersCache implements ProvidersAccess, LookupApplicationName {
     }
 
     public void updateAsync(boolean forceRefreshAll, @Nullable Runnable callback) {
-
-        // NOTE: This method is called when the UI language changes.
-        // For that reason we update our RecentsRoot to reflect
-        // the current language.
-        final String title = mContext.getString(getRes(R.string.root_recent));
-        List<UserId> userIds = new ArrayList<>(getUserIds());
-        for (UserId userId : userIds) {
-            RootInfo recentRoot = createOrGetRecentsRoot(userId);
-            recentRoot.title = title;
-            // Nothing else about the root should ever change.
-            assert (recentRoot.authority == null);
-            assert (recentRoot.rootId == null);
-            assert (recentRoot.derivedIcon == getRes(R.drawable.ic_root_recent));
-            assert (recentRoot.derivedType == RootInfo.TYPE_RECENTS);
-            assert (recentRoot.flags == (Root.FLAG_LOCAL_ONLY | Root.FLAG_SUPPORTS_IS_CHILD));
-            assert (recentRoot.availableBytes == -1);
+        createOrUpdateRecentsRoot();
+        if (isHomeScreenFilesFlagEnabled()) {
+            try {
+                synchronized (mLock) {
+                    // Resources don't change, so only compute this the first time.
+                    if (!mShortcutResourcesFirstLoadDone) {
+                        mShortcutResources = getShortcutResources(getContextAfterLocaleChange());
+                        mShortcutResourcesFirstLoadDone = true;
+                    }
+                }
+            } catch (Exception e) {
+                // There should be no errors from trying to read the resources,
+                // but catch just in case.
+                Log.w(TAG, "Unable to properly get the resource values. " + e);
+            }
         }
 
         new MultiProviderUpdateTask(forceRefreshAll, null, callback).executeOnExecutor(
@@ -272,6 +312,90 @@ public class ProvidersCache implements ProvidersAccess, LookupApplicationName {
                 authority, 0);
         if (info != null) {
             updatePackageAsync(userId, info.packageName);
+        }
+    }
+
+    /**
+     * Creates or updates the recents root for every user. This method will also be called when the
+     * locale or language of the device is changed.
+     */
+    public void createOrUpdateRecentsRoot() {
+        final String title = mContext.getString(getRes(R.string.root_recent));
+        List<UserId> userIds = new ArrayList<>(getUserIds());
+        for (UserId userId : userIds) {
+            RootInfo recentRoot = createOrGetRecentsRoot(userId);
+            recentRoot.title = title;
+            // Nothing else about the root should ever change.
+            assert (recentRoot.authority == null);
+            assert (recentRoot.rootId == null);
+            assert (recentRoot.derivedIcon == getRes(R.drawable.ic_root_recent));
+            assert (recentRoot.derivedType == RootInfo.TYPE_RECENTS);
+            assert (recentRoot.flags == (Root.FLAG_LOCAL_ONLY | Root.FLAG_SUPPORTS_IS_CHILD));
+            assert (recentRoot.availableBytes == -1);
+        }
+    }
+
+    /**
+     * If the locale has changed, then we want to ensure that the next set of shortcut resources
+     * fetch the new localised strings.
+     */
+    private Context getContextAfterLocaleChange() {
+        final Configuration conf = mContext.getResources().getConfiguration();
+        conf.setLocale(Locale.getDefault());
+        mContext.getResources().updateConfiguration(conf, null);
+        return mContext.createConfigurationContext(conf);
+    }
+
+    /** Retrieves all the available shortcut resource values. */
+    @VisibleForTesting
+    public List<ShortcutResourceValues> getShortcutResources(Context context) {
+        List<ShortcutResourceValues> shortcutResources = new ArrayList<>();
+        // Get values from the RRO.
+        List<String> authorities = List.of(
+                context.getResources().getStringArray(R.array.shortcut_authorities));
+        List<String> rootIds = List.of(
+                context.getResources().getStringArray(R.array.shortcut_root_ids));
+        List<String> parentDocIds = List.of(
+                context.getResources().getStringArray(R.array.shortcut_parent_doc_ids));
+        List<String> folderTitles = List.of(
+                context.getResources().getStringArray(R.array.shortcut_titles));
+        List<String> localizedTitles =
+                List.of(context.getResources().getStringArray(R.array.shortcut_folder_names));
+        TypedArray shortcutIcons =
+                context.getResources().obtainTypedArray(R.array.shortcut_icons);
+
+        int shortcutArraySize = authorities.size();
+        if (shortcutArraySize != rootIds.size()
+                || shortcutArraySize != parentDocIds.size()
+                || shortcutArraySize != folderTitles.size()
+                || shortcutArraySize != localizedTitles.size()
+                || shortcutArraySize != shortcutIcons.length()) {
+            // Early return an empty list if there is a mismatch in size.
+            return shortcutResources;
+        }
+
+        for (int i = 0; i < shortcutArraySize; i++) {
+            ShortcutResourceValues shortcutResource =
+                    new ShortcutResourceValues(
+                            authorities.get(i),
+                            rootIds.get(i),
+                            parentDocIds.get(i),
+                            folderTitles.get(i),
+                            localizedTitles.get(i),
+                            shortcutIcons.getResourceId(
+                                    i, ShortcutResourceValues.INVALID_ICON_REF));
+            shortcutResources.add(shortcutResource);
+        }
+        return shortcutResources;
+    }
+
+    /**
+     * Resets the mShortcutResourcesFirstLoadDone value to false to force a reload of the shortcut
+     * resources the next time we call updateAsync().
+     */
+    public void resetShortcutResourcesFirstLoadDone() {
+        synchronized (mLock) {
+            mShortcutResourcesFirstLoadDone = false;
         }
     }
 
@@ -519,6 +643,68 @@ public class ProvidersCache implements ProvidersAccess, LookupApplicationName {
     public RootInfo getDefaultRootBlocking(State state) {
         RootInfo root = ProvidersAccess.getDefaultRoot(getRootsBlocking(), state);
         return root != null ? root : createOrGetRecentsRoot(UserId.CURRENT_USER);
+    }
+
+    /**
+     * Loads all the shortcuts that were provided by the RRO.
+     * @return a list of all the shortcuts
+     */
+    public Collection<ShortcutInfo> loadShortcutsForUser(UserId userId) {
+        synchronized (mLock) {
+            Collection<ShortcutInfo> shortcuts = new ArrayList<>();
+            for (ShortcutResourceValues shortcutRes : mShortcutResources) {
+                final ShortcutInfo shortcut = generateShortcut(userId, shortcutRes);
+                if (shortcut != null) {
+                    shortcuts.add(shortcut);
+                }
+            }
+            mShortcuts.replaceValues(userId, shortcuts);
+            return shortcuts;
+        }
+    }
+
+    @Override
+    public Collection<ShortcutInfo> getShortcutsForUser(UserId userId) {
+        synchronized (mLock) {
+            return mShortcuts.get(userId);
+        }
+    }
+
+    @Override
+    public @Nullable ProviderInfo getProviderInfo(UserId userId, String authority) {
+        return userId.getPackageManager(mContext)
+                .resolveContentProvider(authority, PackageManager.GET_META_DATA);
+    }
+
+    @GuardedBy("mLock")
+    private @Nullable ShortcutInfo generateShortcut(
+            UserId userId, ShortcutResourceValues shortcutRes) {
+        UserAuthority userAuthority = new UserAuthority(userId, shortcutRes.getAuthority());
+        // Get the documents provider root of the parent to verify the shortcut can be created.
+        RootInfo parentRoot = mRoots.get(userAuthority)
+                .stream()
+                .filter(root -> Objects.equals(root.rootId, shortcutRes.getRootId()))
+                .findFirst()
+                .orElse(null);
+        if (parentRoot == null) {
+            Log.w(
+                    TAG,
+                    "Cannot create shortcut root folder "
+                            + shortcutRes.getFolderTitle()
+                            + ". The parent DocumentsProvider root not found.");
+            return null;
+        }
+
+        // Creates the shortcut info instance. Leave out the URI and the document ID for now.
+        // These will be set later.
+        return new ShortcutInfo(
+                parentRoot,
+                shortcutRes.getParentDocumentId(),
+                shortcutRes.getFolderTitle(),
+                shortcutRes.getLocalizedDisplayTitle(),
+                shortcutRes.getIconReference() != ShortcutResourceValues.INVALID_ICON_REF
+                        ? shortcutRes.getIconReference()
+                        : parentRoot.derivedIcon);
     }
 
     public void logCache() {

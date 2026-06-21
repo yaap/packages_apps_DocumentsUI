@@ -36,6 +36,7 @@ import static com.android.documentsui.services.FileOperationService.EXTRA_OPERAT
 import static com.android.documentsui.services.FileOperationService.MESSAGE_FINISH;
 import static com.android.documentsui.services.FileOperationService.MESSAGE_PROGRESS;
 import static com.android.documentsui.services.FileOperationService.OPERATION_COPY;
+import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.FlagUtils.isVisualSignalsFlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
 
@@ -70,7 +71,6 @@ import android.system.Int64Ref;
 import android.system.Os;
 import android.system.OsConstants;
 import android.system.StructStat;
-import android.text.BidiFormatter;
 import android.util.ArrayMap;
 import android.util.Log;
 import android.webkit.MimeTypeMap;
@@ -98,7 +98,6 @@ import java.io.InputStream;
 import java.io.SyncFailedException;
 import java.text.NumberFormat;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
@@ -171,7 +170,11 @@ class CopyJob extends ResolvedResourcesJob {
     @Override
     public Notification getFailureNotification() {
         return getFailureNotification(
-                getFailureContentTitle(getRes(R.string.copy_error_notification_title)),
+                getFailureContentTitle(
+                        getRes(
+                                isUseMaterial3FlagEnabled()
+                                        ? R.string.copy_error_2
+                                        : R.string.copy_error_notification_title)),
                 getRes(R.drawable.ic_menu_copy));
     }
 
@@ -206,12 +209,6 @@ class CopyJob extends ResolvedResourcesJob {
         return warningBuilder.build();
     }
 
-    protected String getProgressMessage() {
-        Map<String, Object> formatArgs = new HashMap<>();
-        formatArgs.put("directory", BidiFormatter.getInstance().unicodeWrap(stack.getTitle()));
-        return getProgressMessage(R.string.copy_in_progress, formatArgs);
-    }
-
     @Override
     JobProgress getJobProgress() {
         if (mProgressTracker == null) {
@@ -219,8 +216,12 @@ class CopyJob extends ResolvedResourcesJob {
                     id,
                     operationType,
                     getState(),
-                    getProgressMessage(),
+                    getFilename(),
+                    mResourceUris.getItemCount(),
                     hasFailures(),
+                    failedDocs,
+                    failedUris,
+                    failedPaths,
                     stack);
         }
         mProgressTracker.updateEstimateRemainingTime();
@@ -228,8 +229,12 @@ class CopyJob extends ResolvedResourcesJob {
                 id,
                 operationType,
                 getState(),
-                getProgressMessage(),
+                getFilename(),
+                mResourceUris.getItemCount(),
                 hasFailures(),
+                failedDocs,
+                failedUris,
+                failedPaths,
                 stack,
                 mProgressTracker.getCurrentBytes(),
                 mProgressTracker.getRequiredBytes(),

@@ -25,7 +25,6 @@ import android.util.Pair;
 
 import com.android.documentsui.DocumentsAccess;
 import com.android.documentsui.base.DocumentInfo;
-import com.android.documentsui.base.RootInfo;
 import com.android.documentsui.base.UserId;
 
 import java.util.List;
@@ -33,8 +32,6 @@ import java.util.List;
 import javax.annotation.Nullable;
 
 public class TestDocumentsAccess implements DocumentsAccess {
-
-    public @Nullable DocumentInfo nextRootDocument;
     public @Nullable DocumentInfo nextDocument;
     public @Nullable List<DocumentInfo> nextDocuments;
 
@@ -44,10 +41,12 @@ public class TestDocumentsAccess implements DocumentsAccess {
     public TestEventHandler<Uri> lastUri = new TestEventHandler<>();
 
     private Pair<DocumentInfo, DocumentInfo> mLastCreatedDoc;
+    public @Nullable Uri mNextDocumentUri;
+    public @Nullable Uri mNextMediaUri;
 
     @Override
-    public DocumentInfo getRootDocument(RootInfo root) {
-        return nextRootDocument;
+    public DocumentInfo getDocument(String authority, String documentId, UserId userId) {
+        return nextDocument;
     }
 
     @Override
@@ -98,5 +97,23 @@ public class TestDocumentsAccess implements DocumentsAccess {
 
     public @Nullable Uri getLastCreatedDocumentUri() {
         return mLastCreatedDoc.second.derivedUri;
+    }
+
+    /**
+     * Takes in a media store URI as an argument and attempts to convert it to a recognisable
+     * documents URI. In the case of TestDocumentsAccess, this will just be whatever has been set as
+     * mNextDocumentUri.
+     */
+    public Uri getDocumentUri(Uri mediaStoreUri) {
+        return mNextDocumentUri;
+    }
+
+    /**
+     * Takes in a media store URI as an argument and attempts to convert it to a recognisable
+     * documents URI. In the case of TestDocumentsAccess, this will just be whatever has been set as
+     * mNextMediaUri.
+     */
+    public Uri getMediaStoreUri(Uri uri) {
+        return mNextMediaUri;
     }
 }

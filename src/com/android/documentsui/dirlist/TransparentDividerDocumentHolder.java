@@ -19,12 +19,14 @@ package com.android.documentsui.dirlist;
 import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.content.Context;
-import android.database.Cursor;
 import android.widget.Space;
 
 import com.android.documentsui.ConfigStore;
 import com.android.documentsui.R;
+import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.State;
+
+import javax.annotation.Nullable;
 
 /**
  * The most elegant transparent blank box that spans N rows ever conceived.
@@ -44,11 +46,12 @@ final class TransparentDividerDocumentHolder extends MessageHolder {
 
     public void bind(State state) {
         mState = state;
-        bind(null, null);
+        bind(null, null, null, false);
     }
 
     @Override
-    public void bind(Cursor cursor, String modelId) {
+    public void bind(
+            DocumentInfo doc, String modelId, @Nullable String summary, boolean justFinishedSync) {
         if (mState.derivedMode == State.MODE_GRID) {
             itemView.setMinimumHeight(mVisibleHeight);
         } else {

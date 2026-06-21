@@ -16,9 +16,15 @@
 
 package com.android.documentsui.testing;
 
+import androidx.annotation.Nullable;
+
 import com.android.documentsui.ActivityConfig;
+import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.DocumentStack;
 import com.android.documentsui.base.State;
+
+import java.util.HashSet;
+import java.util.Set;
 
 public class TestActivityConfig extends ActivityConfig {
 
@@ -26,13 +32,32 @@ public class TestActivityConfig extends ActivityConfig {
     public boolean nextDocumentEnabled = false;
     public boolean nextManagedModeEnabled = false;
     public boolean nextDragAndDropEnabled = false;
+    public Set<String> documentsWithUnavailableContent = new HashSet<>();
 
-    public boolean canSelectType(String docMimeType, int docFlags, State state) {
+    /** Whether the document can be selected in this context. */
+    public boolean canSelectType(
+            String docMimeType,
+            int docFlags,
+            @Nullable Integer syncStateFlags,
+            State state,
+            boolean isOnline) {
         return nextSelectType;
     }
 
-    public boolean isDocumentEnabled(String docMimeType, int docFlags, State state) {
+    /** Whether the document is enabled in this context. */
+    public boolean isDocumentEnabled(
+            String docMimeType,
+            int docFlags,
+            @Nullable Integer syncStateFlags,
+            State state,
+            boolean isOnline) {
         return nextDocumentEnabled;
+    }
+
+    @Override
+    /* Whether the document has content available. */
+    public boolean isContentAvailable(DocumentInfo doc, State state, boolean isOnline) {
+        return !documentsWithUnavailableContent.contains(doc.documentId);
     }
 
     /**

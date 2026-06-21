@@ -33,6 +33,10 @@ import java.util.function.Function;
 
 public interface DocumentClipper {
 
+    // A clip is the list of files passed to the FileOperationService when starting a file
+    // operation. A "jumbo clip" is when this list is too big to pass via IPC, so the URIs are
+    // written to a temp file on disk and this file is read by the FileOperationService instead.
+
     static final String OP_JUMBO_SELECTION_SIZE = "jumboSelection-size";
     static final String OP_JUMBO_SELECTION_TAG = "jumboSelection-tag";
 
@@ -64,11 +68,12 @@ public interface DocumentClipper {
      */
     void clipDocumentsForCopy(Function<String, Uri> uriBuilder, Selection<String> selection);
 
-    /**
-     *  Puts {@Code ClipData} in a primary clipboard, describing a cut operation
-     */
+    /** Puts {@code ClipData} in a primary clipboard, describing a cut operation */
     void clipDocumentsForCut(
-            Function<String, Uri> uriBuilder, Selection<String> selection, DocumentInfo parent);
+            Function<String, Uri> uriBuilder,
+            Selection<String> selection,
+            DocumentInfo parent,
+            boolean isFromRecents);
 
     /**
      * Copies documents from clipboard. It's the same as {@link #copyFromClipData} with clipData
@@ -137,4 +142,24 @@ public interface DocumentClipper {
             DocumentStack dstStack,
             ClipData clipData,
             FileOperations.Callback callback);
+
+    /**
+     * Trashes documents from a given clip data.
+     *
+     * @param dstStack the document stack to the destination.
+     * @param clipData the clipData to trash from.
+     * @param callback callback to notify when operation is scheduled or rejected.
+     */
+    void trashFromClipData(
+            DocumentStack dstStack, ClipData clipData, FileOperations.Callback callback);
+
+    /**
+     * Restores the trashed documents from a given clip data.
+     *
+     * @param dstStack the document stack to the destination.
+     * @param clipData the clipData to trash from
+     * @param callback callback to notify when operation is scheduled or rejected.
+     */
+    void restoreFromTrashClipData(
+            DocumentStack dstStack, ClipData clipData, FileOperations.Callback callback);
 }

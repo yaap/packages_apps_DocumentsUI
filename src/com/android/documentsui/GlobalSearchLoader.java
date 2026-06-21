@@ -67,8 +67,13 @@ public class GlobalSearchLoader extends MultiRootDocumentsLoader {
 
     @Override
     protected boolean shouldIgnoreRoot(RootInfo root) {
-        // Only support local search in GlobalSearchLoader
-        if (!root.isLocalOnly() || !root.supportsSearch()) {
+        // Only support local search in GlobalSearchLoader and don't include the MediaProvider "all
+        // files" root as that's only supported with searchv2
+        if (!root.isLocalOnly() || !root.supportsSearch() || root.isFiles()) {
+            return true;
+        }
+        // Also local search is not supported in V1 of loaders.
+        if (root.isLocalSearch(getContext())) {
             return true;
         }
 
@@ -112,7 +117,12 @@ public class GlobalSearchLoader extends MultiRootDocumentsLoader {
 
         @Override
         protected RootCursorWrapper generateResultCursor(RootInfo rootInfo, Cursor oriCursor) {
-            return new RootCursorWrapper(rootInfo.userId, authority, rootInfo.rootId, oriCursor,
+            return new RootCursorWrapper(
+                    rootInfo.userId,
+                    authority,
+                    rootInfo.rootId,
+                    rootInfo.hasLimitedFunctionalityWhenOffline(),
+                    oriCursor,
                     -1 /* maxCount */);
         }
     }

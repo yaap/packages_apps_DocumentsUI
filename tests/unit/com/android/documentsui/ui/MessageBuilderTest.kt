@@ -15,220 +15,350 @@
  */
 package com.android.documentsui.ui
 
-import android.content.Context
-import android.content.res.Resources
-import android.net.Uri
+import android.platform.test.annotations.DisableFlags
+import android.platform.test.annotations.EnableFlags
 import android.provider.DocumentsContract.Document.MIME_TYPE_DIR
+import androidx.core.net.toUri
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.documentsui.OperationDialogFragment.DIALOG_TYPE_CONVERTED
 import com.android.documentsui.OperationDialogFragment.DIALOG_TYPE_FAILURE
-import com.android.documentsui.R
 import com.android.documentsui.base.DocumentInfo
+import com.android.documentsui.flags.Flags.FLAG_USE_MATERIAL3
+import com.android.documentsui.flags.Flags.FLAG_ZIP_NG_RO
+import com.android.documentsui.rules.OverrideFlagsRule
 import com.android.documentsui.services.FileOperationService.OPERATION_COMPRESS
 import com.android.documentsui.services.FileOperationService.OPERATION_COPY
 import com.android.documentsui.services.FileOperationService.OPERATION_DELETE
 import com.android.documentsui.services.FileOperationService.OPERATION_EXTRACT
 import com.android.documentsui.services.FileOperationService.OPERATION_MOVE
+import com.android.documentsui.services.FileOperationService.OPERATION_RESTORE
+import com.android.documentsui.services.FileOperationService.OPERATION_TRASH
 import com.android.documentsui.services.FileOperationService.OPERATION_UNKNOWN
-import org.junit.Assert.assertEquals
-import org.junit.Before
+import com.google.common.truth.Truth.assertThat
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.junit.runners.Parameterized
-import org.junit.runners.Suite
-import org.junit.runners.Suite.SuiteClasses
-import org.mockito.ArgumentMatchers.anyString
-import org.mockito.Mock
-import org.mockito.Mockito.eq
-import org.mockito.Mockito.`when` as whenever
-import org.mockito.MockitoAnnotations
 
-@RunWith(Suite::class)
-@SuiteClasses(
-    MessageBuilderTest.GenerateDeleteMessage::class,
-    MessageBuilderTest.GenerateListMessage::class
-)
-open class MessageBuilderTest() {
-    companion object {
-        const val EXPECTED_MESSAGE = "Delete message"
+@RunWith(AndroidJUnit4::class)
+@SmallTest
+class MessageBuilderTest() {
+    @get:Rule val setFlags = OverrideFlagsRule()
+
+    private val context =
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+    private val messageBuilder = MessageBuilder(context)
+
+    @Test
+    fun generateDeleteMessage() {
+        val isInTrash = false
+        assertThat(messageBuilder.generateDeleteMessage(listOf(file("File")), isInTrash))
+            .isEqualTo("“File” will be deleted forever. This can’t be undone.")
+        assertThat(messageBuilder.generateDeleteMessage(listOf(directory("Dir")), isInTrash))
+            .isEqualTo("“Dir” will be deleted forever. This can’t be undone.")
+        assertThat(
+                messageBuilder.generateDeleteMessage(
+                    listOf(file("File 1"), file("File 2")),
+                    isInTrash,
+                )
+            )
+            .isEqualTo("2 items will be deleted forever. This can’t be undone.")
+        assertThat(
+                messageBuilder.generateDeleteMessage(
+                    listOf(directory("Directory 1"), directory("Directory 2")),
+                    isInTrash,
+                )
+            )
+            .isEqualTo("2 items will be deleted forever. This can’t be undone.")
+        assertThat(
+                messageBuilder.generateDeleteMessage(
+                    listOf(file("File 1"), directory("Directory 1")),
+                    isInTrash,
+                )
+            )
+            .isEqualTo("2 items will be deleted forever. This can’t be undone.")
     }
 
-    @SmallTest
-    class GenerateDeleteMessage() {
-        private lateinit var messageBuilder: MessageBuilder
-
-        @Mock
-        private lateinit var resources: Resources
-
-        @Mock
-        private lateinit var context: Context
-
-        @Before
-        fun setUp() {
-            MockitoAnnotations.openMocks(this)
-            whenever(context.resources).thenReturn(resources)
-            messageBuilder = MessageBuilder(context)
-        }
-
-        private fun assertDeleteMessage(docInfo: DocumentInfo, resId: Int) {
-            whenever(
-                resources.getString(
-                    eq(resId),
-                    eq(docInfo.displayName)
+    @Test
+    fun generateInTrashItemsDeleteMessage() {
+        val isInTrash = true
+        assertThat(messageBuilder.generateDeleteMessage(listOf(file("File")), isInTrash))
+            .isEqualTo("“File” will be deleted forever. This can’t be undone.")
+        assertThat(messageBuilder.generateDeleteMessage(listOf(directory("Dir")), isInTrash))
+            .isEqualTo("“Dir” will be deleted forever. This can’t be undone.")
+        assertThat(
+                messageBuilder.generateDeleteMessage(
+                    listOf(file("File 1"), file("File 2")),
+                    isInTrash,
                 )
-            ).thenReturn(EXPECTED_MESSAGE)
-            assertEquals(messageBuilder.generateDeleteMessage(listOf(docInfo)), EXPECTED_MESSAGE)
-        }
-
-        private fun assertQuantityDeleteMessage(docInfos: List<DocumentInfo>, resId: Int) {
-            whenever(
-                resources.getQuantityString(
-                    eq(resId),
-                    eq(docInfos.size),
-                    eq(docInfos.size)
+            )
+            .isEqualTo("2 items in trash will be deleted forever. This can’t be undone.")
+        assertThat(
+                messageBuilder.generateDeleteMessage(
+                    listOf(directory("Directory 1"), directory("Directory 2")),
+                    isInTrash,
                 )
-            ).thenReturn(EXPECTED_MESSAGE)
-            assertEquals(messageBuilder.generateDeleteMessage(docInfos), EXPECTED_MESSAGE)
-        }
-
-        @Test
-        fun testGenerateDeleteMessage_singleFile() {
-            assertDeleteMessage(
-                createFile("Test doc"),
-                R.string.delete_filename_confirmation_message
             )
-        }
-
-        @Test
-        fun testGenerateDeleteMessage_singleDirectory() {
-            assertDeleteMessage(
-                createDirectory("Test doc"),
-                R.string.delete_foldername_confirmation_message
+            .isEqualTo("2 items in trash will be deleted forever. This can’t be undone.")
+        assertThat(
+                messageBuilder.generateDeleteMessage(
+                    listOf(file("File 1"), directory("Directory 1")),
+                    isInTrash,
+                )
             )
-        }
-
-        @Test
-        fun testGenerateDeleteMessage_multipleFiles() {
-            assertQuantityDeleteMessage(
-                listOf(createFile("File 1"), createFile("File 2")),
-                R.plurals.delete_files_confirmation_message
-            )
-        }
-
-        @Test
-        fun testGenerateDeleteMessage_multipleDirectories() {
-            assertQuantityDeleteMessage(
-                listOf(
-                    createDirectory("Directory 1"),
-                    createDirectory("Directory 2")
-                ),
-                R.plurals.delete_folders_confirmation_message
-            )
-        }
-
-        @Test
-        fun testGenerateDeleteMessage_mixedFilesAndDirectories() {
-            assertQuantityDeleteMessage(
-                listOf(createFile("File 1"), createDirectory("Directory 1")),
-                R.plurals.delete_items_confirmation_message
-            )
-        }
+            .isEqualTo("2 items in trash will be deleted forever. This can’t be undone.")
     }
 
-    @SmallTest
-    @RunWith(Parameterized::class)
-    class GenerateListMessage() {
-        private lateinit var messageBuilder: MessageBuilder
-
-        @Mock
-        private lateinit var resources: Resources
-
-        @Mock
-        private lateinit var context: Context
-
-        @Before
-        fun setUp() {
-            MockitoAnnotations.openMocks(this)
-            whenever(context.resources).thenReturn(resources)
-            messageBuilder = MessageBuilder(context)
-        }
-
-        data class ListMessageData(
-            val dialogType: Int,
-            val opType: Int = OPERATION_UNKNOWN,
-            val resId: Int
+    @Test
+    @EnableFlags(FLAG_USE_MATERIAL3, FLAG_ZIP_NG_RO)
+    fun generateListMessage() {
+        data class Params(
+            val dialog: Int,
+            val op: Int,
+            val titleWant1: String,
+            val titleWant2: String,
         )
-
-        companion object {
-            @Parameterized.Parameters(name = "{0}")
-            @JvmStatic
-            fun parameters() =
-                listOf(
-                    ListMessageData(
-                        dialogType = DIALOG_TYPE_CONVERTED,
-                        resId = R.plurals.copy_converted_warning_content,
-                    ),
-                    ListMessageData(
-                        dialogType = DIALOG_TYPE_FAILURE,
-                        opType = OPERATION_COPY,
-                        resId = R.plurals.copy_failure_alert_content,
-                    ),
-                    ListMessageData(
-                        dialogType = DIALOG_TYPE_FAILURE,
-                        opType = OPERATION_COMPRESS,
-                        resId = R.plurals.compress_failure_alert_content,
-                    ),
-                    ListMessageData(
-                        dialogType = DIALOG_TYPE_FAILURE,
-                        opType = OPERATION_EXTRACT,
-                        resId = R.plurals.extract_failure_alert_content,
-                    ),
-                    ListMessageData(
-                        dialogType = DIALOG_TYPE_FAILURE,
-                        opType = OPERATION_DELETE,
-                        resId = R.plurals.delete_failure_alert_content,
-                    ),
-                    ListMessageData(
-                        dialogType = DIALOG_TYPE_FAILURE,
-                        opType = OPERATION_MOVE,
-                        resId = R.plurals.move_failure_alert_content,
-                    ),
-                )
-        }
-
-        @Parameterized.Parameter(0)
-        lateinit var testData: ListMessageData
-
-        @Test
-        fun testGenerateListMessage() {
-            whenever(
-                resources.getQuantityString(
-                    eq(testData.resId),
-                    eq(2),
-                    anyString(),
-                )
-            ).thenReturn(EXPECTED_MESSAGE)
-            assertEquals(
-                messageBuilder.generateListMessage(
-                    testData.dialogType,
-                    testData.opType,
-                    listOf(createFile("File 1")),
-                    listOf(Uri.parse("content://random-uri")),
-                    listOf("/a/path")
+        val params =
+            listOf(
+                Params(
+                    dialog = DIALOG_TYPE_CONVERTED,
+                    op = OPERATION_UNKNOWN,
+                    titleWant1 = "This file was converted to another format:",
+                    titleWant2 = "These files were converted to another format:",
                 ),
-                EXPECTED_MESSAGE
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_COPY,
+                    titleWant1 = "This file wasn’t copied:",
+                    titleWant2 = "These files weren’t copied:",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_MOVE,
+                    titleWant1 = "This file wasn’t moved:",
+                    titleWant2 = "These files weren’t moved:",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_COMPRESS,
+                    titleWant1 = "This file wasn’t zipped:",
+                    titleWant2 = "These files weren’t zipped:",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_EXTRACT,
+                    titleWant1 = "This file wasn’t extracted:",
+                    titleWant2 = "These files weren’t extracted:",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_DELETE,
+                    titleWant1 = "This file wasn’t deleted:",
+                    titleWant2 = "These files weren’t deleted:",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_TRASH,
+                    titleWant1 = "This file wasn’t trashed:",
+                    titleWant2 = "These files weren’t trashed:",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_RESTORE,
+                    titleWant1 = "This file wasn’t restored:",
+                    titleWant2 = "These files weren’t restored:",
+                ),
             )
+
+        val expectedMessage1 = "<p>&#8226; &#34;File 1&#34;<br></p>"
+        val expectedMessage2 =
+            "<p>&#8226; &#34;File 1&#34;<br>" +
+                "&#8226; &#34;content://random-uri/File+2&#34;<br>" +
+                "&#8226; &#34;File 3&#34;<br></p>"
+
+        for (p in params) {
+            val listDialogContent1 =
+                messageBuilder.generateListDialogContent(
+                    p.dialog,
+                    p.op,
+                    listOf(file("File 1")),
+                    null,
+                    null,
+                )
+
+            assertThat(listDialogContent1.title).isEqualTo(p.titleWant1)
+            assertThat(listDialogContent1.message).isEqualTo(expectedMessage1)
+
+            val listDialogContent2 =
+                messageBuilder.generateListDialogContent(
+                    p.dialog,
+                    p.op,
+                    listOf(file("File 1")),
+                    listOf("content://random-uri/File+2".toUri()),
+                    listOf("/Dir/File 3"),
+                )
+
+            assertThat(listDialogContent2.title).isEqualTo(p.titleWant2)
+            assertThat(listDialogContent2.message).isEqualTo(expectedMessage2)
+        }
+    }
+
+    @Test
+    @EnableFlags(FLAG_ZIP_NG_RO)
+    fun getListContent() {
+        assertThat(MessageBuilder.getListContent(listOf(file("File 1")), null, null))
+            .isEqualTo("<p>&#8226; &#34;File 1&#34;<br></p>")
+
+        assertThat(
+                MessageBuilder.getListContent(
+                    listOf(file("File 1")),
+                    listOf("content://random-uri/File+2".toUri()),
+                    listOf("/Dir/File 3"),
+                )
+            )
+            .isEqualTo(
+                "<p>&#8226; &#34;File 1&#34;<br>" +
+                    "&#8226; &#34;content://random-uri/File+2&#34;<br>" +
+                    "&#8226; &#34;File 3&#34;<br></p>"
+            )
+    }
+
+    @Test
+    @DisableFlags(FLAG_ZIP_NG_RO)
+    fun generateListMessageOld() {
+        data class Params(
+            val dialog: Int,
+            val op: Int,
+            val titleWant1: String? = null,
+            val titleWant2: String? = null,
+            val messageWant1: String,
+            val messageWant2: String,
+        )
+        val params =
+            listOf(
+                Params(
+                    dialog = DIALOG_TYPE_CONVERTED,
+                    op = OPERATION_UNKNOWN,
+                    messageWant1 =
+                        "This file was converted to another format: " +
+                            "<p>&#8226; &#34;File 1&#34;<br></p>",
+                    messageWant2 =
+                        "These files were converted to another format: " +
+                            "<p>&#8226; &#34;File 1&#34;<br>" +
+                            "&#8226; &#34;content://random-uri/File+2&#34;<br>" +
+                            "&#8226; &#34;File 3&#34;<br></p>",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_COPY,
+                    messageWant1 = "This file wasn’t copied: <p>&#8226; &#34;File 1&#34;<br></p>",
+                    messageWant2 =
+                        "These files weren’t copied: " +
+                            "<p>&#8226; &#34;File 1&#34;<br>" +
+                            "&#8226; &#34;content://random-uri/File+2&#34;<br>" +
+                            "&#8226; &#34;File 3&#34;<br></p>",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_MOVE,
+                    messageWant1 = "This file wasn’t moved: <p>&#8226; &#34;File 1&#34;<br></p>",
+                    messageWant2 =
+                        "These files weren’t moved: " +
+                            "<p>&#8226; &#34;File 1&#34;<br>" +
+                            "&#8226; &#34;content://random-uri/File+2&#34;<br>" +
+                            "&#8226; &#34;File 3&#34;<br></p>",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_COMPRESS,
+                    messageWant1 =
+                        "This file wasn’t compressed: <p>&#8226; &#34;File 1&#34;<br></p>",
+                    messageWant2 =
+                        "These files weren’t compressed: " +
+                            "<p>&#8226; &#34;File 1&#34;<br>" +
+                            "&#8226; &#34;content://random-uri/File+2&#34;<br>" +
+                            "&#8226; &#34;File 3&#34;<br></p>",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_EXTRACT,
+                    messageWant1 =
+                        "This file wasn’t extracted: <p>&#8226; &#34;File 1&#34;<br></p>",
+                    messageWant2 =
+                        "These files weren’t extracted: " +
+                            "<p>&#8226; &#34;File 1&#34;<br>" +
+                            "&#8226; &#34;content://random-uri/File+2&#34;<br>" +
+                            "&#8226; &#34;File 3&#34;<br></p>",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_DELETE,
+                    messageWant1 = "This file wasn’t deleted: <p>&#8226; &#34;File 1&#34;<br></p>",
+                    messageWant2 =
+                        "These files weren’t deleted: " +
+                            "<p>&#8226; &#34;File 1&#34;<br>" +
+                            "&#8226; &#34;content://random-uri/File+2&#34;<br>" +
+                            "&#8226; &#34;File 3&#34;<br></p>",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_TRASH,
+                    titleWant1 = "This file wasn’t trashed:",
+                    titleWant2 = "These files weren’t trashed:",
+                    messageWant1 = "<p>&#8226; &#34;File 1&#34;<br></p>",
+                    messageWant2 =
+                        "<p>&#8226; &#34;File 1&#34;<br>" +
+                            "&#8226; &#34;content://random-uri/File+2&#34;<br>" +
+                            "&#8226; &#34;File 3&#34;<br></p>",
+                ),
+                Params(
+                    dialog = DIALOG_TYPE_FAILURE,
+                    op = OPERATION_RESTORE,
+                    titleWant1 = "This file wasn’t restored:",
+                    titleWant2 = "These files weren’t restored:",
+                    messageWant1 = "<p>&#8226; &#34;File 1&#34;<br></p>",
+                    messageWant2 =
+                        "<p>&#8226; &#34;File 1&#34;<br>" +
+                            "&#8226; &#34;content://random-uri/File+2&#34;<br>" +
+                            "&#8226; &#34;File 3&#34;<br></p>",
+                ),
+            )
+
+        for (p in params) {
+            val listDialogContent1 =
+                messageBuilder.generateListDialogContent(
+                    p.dialog,
+                    p.op,
+                    listOf(file("File 1")),
+                    null,
+                    null,
+                )
+
+            assertThat(listDialogContent1.title).isEqualTo(p.titleWant1)
+            assertThat(listDialogContent1.message).isEqualTo(p.messageWant1)
+
+            val listDialogContent2 =
+                messageBuilder.generateListDialogContent(
+                    p.dialog,
+                    p.op,
+                    listOf(file("File 1")),
+                    listOf("content://random-uri/File+2".toUri()),
+                    listOf("/Dir/File 3"),
+                )
+
+            assertThat(listDialogContent2.title).isEqualTo(p.titleWant2)
+            assertThat(listDialogContent2.message).isEqualTo(p.messageWant2)
         }
     }
 }
 
-fun createFile(displayName: String): DocumentInfo {
+fun file(displayName: String): DocumentInfo {
     val doc = DocumentInfo()
     doc.displayName = displayName
     return doc
 }
 
-fun createDirectory(displayName: String): DocumentInfo {
+fun directory(displayName: String): DocumentInfo {
     val doc = DocumentInfo()
     doc.displayName = displayName
     doc.mimeType = MIME_TYPE_DIR

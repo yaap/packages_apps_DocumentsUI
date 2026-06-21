@@ -35,7 +35,7 @@ public class DirectoryMessagesUiTest extends ActivityTestJunit4<FilesActivity> {
 
     @Before
     public void setUpTest() throws UiObjectNotFoundException {
-        bots.roots.openRoot("Demo Root");
+        switchRoot("Demo Root");
         bots.main.switchToListMode();
     }
 

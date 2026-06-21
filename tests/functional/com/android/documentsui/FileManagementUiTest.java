@@ -18,12 +18,14 @@ package com.android.documentsui;
 
 import static com.android.documentsui.StubProvider.ROOT_0_ID;
 import static com.android.documentsui.StubProvider.ROOT_1_ID;
+import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 
 import static org.junit.Assert.fail;
 
 import android.net.Uri;
 import android.os.Bundle;
 import android.platform.test.annotations.DesktopTest;
+import android.platform.test.annotations.EnableFlags;
 import android.view.KeyEvent;
 
 import androidx.test.filters.LargeTest;
@@ -33,11 +35,11 @@ import com.android.documentsui.base.RootInfo;
 import com.android.documentsui.base.Shared;
 import com.android.documentsui.files.FilesActivity;
 import com.android.documentsui.filters.HugeLongTest;
+import com.android.documentsui.flags.Flags;
+import com.android.documentsui.rules.OverrideFlagsRule;
 import com.android.documentsui.rules.TestFilesRule;
-import com.android.documentsui.sorting.SortDimension;
-import com.android.documentsui.sorting.SortModel;
+import com.android.modules.utils.build.SdkLevel;
 
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 
@@ -45,6 +47,8 @@ import java.util.List;
 
 @LargeTest
 public class FileManagementUiTest extends ActivityTestJunit4<FilesActivity> {
+
+    @Rule public final OverrideFlagsRule mOverrideFlagsRule = new OverrideFlagsRule();
 
     @Rule
     public final TestFilesRule mTestFilesRule =
@@ -62,21 +66,67 @@ public class FileManagementUiTest extends ActivityTestJunit4<FilesActivity> {
                                 docsHelper.createDocument(root, "text/plain", "poodles.text");
                             });
 
-    @Ignore
     @Test
+    @EnableFlags(Flags.FLAG_USE_MATERIAL3)
     public void testCreateDirectory() throws Exception {
-        bots.main.openOverflowMenu();
+        // Disable the root notification because it triggers root list update which then triggers
+        // the fragment recreation, which impacts the focus behavior.
+        Bundle bundle = new Bundle();
+        bundle.putBoolean(StubProvider.EXTRA_ENABLE_ROOT_NOTIFICATION, false);
+        mDocsHelper.configure(null, bundle);
+
+        final String newFolderName = "Kung fu Panda";
+        bots.main.clickToolbarOverflowItem(context.getString(R.string.menu_create_dir));
         device.waitForIdle();
 
-        bots.main.clickToolbarOverflowItem("New folder");
+        bots.main.setDialogText(newFolderName);
         device.waitForIdle();
 
-        bots.main.setDialogText("Kung Fu Panda");
+        // Pressing enter to commit the new folder creation and close the dialog. Note:
+        // pressEnter() doesn't work here, we need an actual keyboard press to trigger focus
+        // change.
+        bots.keyboard.pressKey(KeyEvent.KEYCODE_ENTER);
+
+        bots.directory.waitForDocument(newFolderName);
+
+        // Focus the newly created directory on S/T doesn't work reliably somehow, the
+        // requestFocus() returns false on both versions. Wrapping the requestFocus() call inside
+        // view.post() fixes the issue on S, but still fail on T, hence we only check U+ here.
+        if (SdkLevel.isAtLeastU()) {
+            bots.directory.assertDocumentHasFocus(newFolderName);
+        }
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_USE_MATERIAL3)
+    public void testCreateDirectoryTrimTrailingSpaces() throws Exception {
+        // Disable the root notification because it triggers root list update which then triggers
+        // the fragment recreation, which impacts the focus behavior.
+        Bundle bundle = new Bundle();
+        bundle.putBoolean(StubProvider.EXTRA_ENABLE_ROOT_NOTIFICATION, false);
+        mDocsHelper.configure(null, bundle);
+
+        final String newFolderName = "Kung fu Panda  ";
+        bots.main.clickToolbarOverflowItem(context.getString(R.string.menu_create_dir));
         device.waitForIdle();
 
-        bots.keyboard.pressEnter();
+        bots.main.setDialogText(newFolderName);
+        device.waitForIdle();
 
-        bots.directory.waitForDocument("Kung Fu Panda");
+        // Pressing enter to commit the new folder creation and close the dialog. Note:
+        // pressEnter() doesn't work here, we need an actual keyboard press to trigger focus
+        // change.
+        bots.keyboard.pressKey(KeyEvent.KEYCODE_ENTER);
+
+        String trimmedName = newFolderName.trim();
+        bots.directory.waitForDocument(trimmedName);
+
+        // Focus the newly created directory on S/T doesn't work reliably somehow, the
+        // requestFocus() returns false on both versions. Wrapping the requestFocus() call inside
+        // view.post() fixes the issue on S, but still fail on T, hence we only check U+ here.
+        if (SdkLevel.isAtLeastU()) {
+            bots.directory.assertDocumentHasFocus(trimmedName);
+        }
     }
 
     @Test
@@ -100,13 +150,20 @@ public class FileManagementUiTest extends ActivityTestJunit4<FilesActivity> {
 
         device.waitForIdle();
 
+        if (isUseMaterial3FlagEnabled()) {
+            // file1.png is still selected.
+            bots.directory.assertSelection(1);
+        }
+
+        // Keep using the old openRoot. The copy action triggers a system popup and a DocsUI
+        // snackbar. The new openRoot is too fast and ends up clicking on the popup/snackbar.
         bots.roots.openRoot(ROOT_1_ID);
         bots.keyboard.pressKey(KeyEvent.KEYCODE_V, KeyEvent.META_CTRL_ON);
 
         bots.directory.waitForDocument("file1.png");
         bots.directory.assertDocumentsVisible("file1.png");
 
-        bots.roots.openRoot(ROOT_0_ID);
+        switchRoot(ROOT_0_ID);
         bots.directory.assertDocumentsAbsent("file1.png");
     }
 
@@ -120,12 +177,19 @@ public class FileManagementUiTest extends ActivityTestJunit4<FilesActivity> {
 
         device.waitForIdle();
 
+        if (isUseMaterial3FlagEnabled()) {
+            // file1.png is still selected.
+            bots.directory.assertSelection(1);
+        }
+
+        // Keep using the old openRoot. The copy action triggers a system popup and a DocsUI
+        // snackbar. The new openRoot is too fast and ends up clicking on the popup/snackbar.
         bots.roots.openRoot(ROOT_1_ID);
         bots.keyboard.pressKey(KeyEvent.KEYCODE_V, KeyEvent.META_CTRL_ON);
 
         bots.directory.waitForDocument("file1.png");
 
-        bots.roots.openRoot(ROOT_0_ID);
+        switchRoot(ROOT_0_ID);
         bots.directory.waitForDocument("file1.png");
     }
 
@@ -135,6 +199,10 @@ public class FileManagementUiTest extends ActivityTestJunit4<FilesActivity> {
         bots.directory.selectDocument("file1.png", 1);
         bots.keyboard.pressKey(KeyEvent.KEYCODE_C, KeyEvent.META_CTRL_ON);
 
+        if (isUseMaterial3FlagEnabled()) {
+            bots.directory.clearSelection();
+        }
+
         device.waitForIdle();
         bots.directory.openDocument("Dir1");
         bots.directory.selectDocument("ChildDir1", 1);
@@ -142,7 +210,7 @@ public class FileManagementUiTest extends ActivityTestJunit4<FilesActivity> {
         bots.keyboard.pressKey(KeyEvent.KEYCODE_V, KeyEvent.META_CTRL_ON);
         device.waitForIdle();
 
-        bots.directory.assertDocumentsVisible("file1.png");
+        bots.directory.waitForDocument("file1.png");
     }
 
     @Test
@@ -176,25 +244,26 @@ public class FileManagementUiTest extends ActivityTestJunit4<FilesActivity> {
             nameOfLastFile = nameOfLastFile.compareTo(name) < 0 ? name : nameOfLastFile;
         }
 
-        bots.roots.openRoot(ROOT_0_ID);
-        bots.directory.openDocument("test");
-        bots.sort.sortBy(
-                SortModel.SORT_DIMENSION_ID_TITLE, SortDimension.SORT_DIRECTION_ASCENDING);
+        // Use keyboard shortcuts in place of manually clicking/tapping.
+        openFolder("test");
         bots.directory.waitForDocument("0.txt");
         bots.keyboard.pressKey(
                 KeyEvent.KEYCODE_A, KeyEvent.META_CTRL_LEFT_ON | KeyEvent.META_CTRL_ON);
         bots.keyboard.pressKey(
                 KeyEvent.KEYCODE_C, KeyEvent.META_CTRL_LEFT_ON | KeyEvent.META_CTRL_ON);
 
-        bots.roots.openRoot(ROOT_0_ID);
-        bots.directory.openDocument("target");
+        switchRoot(ROOT_0_ID);
+        openFolder("target");
         bots.directory.pasteFilesFromClipboard();
+
+        // Switch to list mode to avoid files being partially in view
+        bots.main.switchToListMode();
 
         // Use these 2 events as a signal that many files have already been copied. Only considering
         // Android devices a more reliable way is to wait until notification goes away, but ARC++
         // uses Chrome OS notifications so it isn't even an option.
         bots.directory.waitForDocument("0.txt");
-        bots.directory.waitForDocument(nameOfLastFile);
+        bots.directory.waitForDocument(nameOfLastFile, true);
 
         final int expectedCount = Shared.MAX_DOCS_IN_INTENT + 1;
         List<DocumentInfo> children = mDocsHelper.listChildren(target, -1);

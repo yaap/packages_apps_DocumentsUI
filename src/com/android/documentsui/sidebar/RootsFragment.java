@@ -19,6 +19,8 @@ package com.android.documentsui.sidebar;
 import static com.android.documentsui.base.Shared.compareToIgnoreCaseNullable;
 import static com.android.documentsui.base.SharedMinimal.DEBUG;
 import static com.android.documentsui.base.SharedMinimal.VERBOSE;
+import static com.android.documentsui.util.FlagUtils.isHomeScreenFilesFlagEnabled;
+import static com.android.documentsui.util.FlagUtils.isTrashFlowEnabled;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
 
@@ -49,6 +51,7 @@ import android.view.ViewGroup;
 import android.widget.ListView;
 
 import androidx.annotation.IdRes;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.annotation.VisibleForTesting;
@@ -63,10 +66,12 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.android.documentsui.ActionHandler;
 import com.android.documentsui.BaseActivity;
 import com.android.documentsui.DocumentsApplication;
+import com.android.documentsui.DragHoverListener;
 import com.android.documentsui.Injector;
 import com.android.documentsui.Injector.Injected;
 import com.android.documentsui.ItemDragListener;
 import com.android.documentsui.R;
+import com.android.documentsui.TimeoutTask;
 import com.android.documentsui.UserManagerState;
 import com.android.documentsui.UserPackage;
 import com.android.documentsui.base.BooleanConsumer;
@@ -76,11 +81,16 @@ import com.android.documentsui.base.Events;
 import com.android.documentsui.base.Features;
 import com.android.documentsui.base.Providers;
 import com.android.documentsui.base.RootInfo;
+import com.android.documentsui.base.ShortcutInfo;
+import com.android.documentsui.base.SidebarEntryItemInfo;
 import com.android.documentsui.base.State;
 import com.android.documentsui.base.UserId;
+import com.android.documentsui.dirlist.AnimationView;
+import com.android.documentsui.loaders.LoaderIds;
 import com.android.documentsui.roots.ProvidersAccess;
 import com.android.documentsui.roots.ProvidersCache;
 import com.android.documentsui.roots.RootsLoader;
+import com.android.documentsui.roots.ShortcutsLoader;
 import com.android.documentsui.util.CrossProfileUtils;
 import com.android.modules.utils.build.SdkLevel;
 
@@ -114,9 +124,12 @@ public class RootsFragment extends Fragment {
      */
     private static final String EXTRA_CONTAINER_ID = "containerId";
     private static final int CONTEXT_MENU_ITEM_TIMEOUT = 500;
+    private static final String LOADER_REFRESH_ROOT_AND_DIRECTORY_ID = "refreshRootAndDirectory";
 
     private RootsListHandler mListHandler;
-    private LoaderCallbacks<Collection<RootInfo>> mCallbacks;
+    private LoaderCallbacks<Collection<RootInfo>> mRootsCallbacks;
+    private LoaderCallbacks<Collection<ShortcutInfo>> mShortcutsCallbacks;
+    private Collection<RootInfo> mLoadedRoots;
     private @Nullable OnDragListener mDragListener;
 
     @Injected
@@ -125,11 +138,14 @@ public class RootsFragment extends Fragment {
     @Injected
     private ActionHandler mActionHandler;
 
-    private List<Item> mApplicationItemList;
+    private List<SortableItem> mApplicationItemList;
 
     // Weather the fragment is using nav_rail_container_roots as its container (in nav_rail_layout).
     // This will always be false if isUseMaterial3FlagEnabled() flag is off.
     private boolean mUseRailAsContainer = false;
+
+    // Maintain state of whether a root and directory refresh is pending.
+    private boolean mRefreshPending = false;
 
     /**
      * Show the RootsFragment inside the navigation drawer container.
@@ -245,14 +261,15 @@ public class RootsFragment extends Fragment {
         Item item = mListHandler.getItemFromViewUnder(x, y);
 
         // If a read-only root, no need to see if top level is writable (it's not)
-        if (!(item instanceof RootItem) || !((RootItem) item).root.supportsCreate()) {
+        if (!(item instanceof BaseSidebarEntryItem)
+                || !((BaseSidebarEntryItem) item).getItemInfo().supportsCreate()) {
             return false;
         }
 
-        final RootItem rootItem = (RootItem) item;
-        getRootDocument(rootItem, (DocumentInfo doc) -> {
-            rootItem.docInfo = doc;
-            callback.run();
+        final BaseSidebarEntryItem sidebarItem = (BaseSidebarEntryItem) item;
+        getSidebarItemDocument(sidebarItem, (DocumentInfo doc) -> {
+                sidebarItem.setDocInfo(doc);
+                callback.run();
         });
         return true;
     }
@@ -273,123 +290,195 @@ public class RootsFragment extends Fragment {
                     DocumentsApplication.getDragAndDropManager(activity),
                     this::getItem,
                     mActionHandler);
-            final ItemDragListener<DragHost> listener = new ItemDragListener<DragHost>(host) {
-                @Override
-                public boolean handleDropEventChecked(View v, DragEvent event) {
-                    final Item item = getItem(v);
+            final ItemDragListener<DragHost> listener =
+                    new ItemDragListener<DragHost>(host) {
+                        @Override
+                        public boolean handleDropEventChecked(View v, DragEvent event) {
+                            final Item item = getItem(v);
 
-                    assert (item.isRoot());
+                            assert (item.isRoot() || item.isShortcut());
 
-                    return item.dropOn(event);
-                }
-            };
+                            return item.dropOn(event);
+                        }
+                    };
             mDragListener = mListHandler.createDragListener(listener);
         }
 
-        mCallbacks = new LoaderCallbacks<Collection<RootInfo>>() {
-            @Override
-            public Loader<Collection<RootInfo>> onCreateLoader(int id, Bundle args) {
-                return new RootsLoader(activity, providers, state);
-            }
+        mShortcutsCallbacks =
+                new LoaderCallbacks<>() {
+                    private Bundle mArgs;
 
-            @Override
-            public void onLoadFinished(
-                    Loader<Collection<RootInfo>> loader, Collection<RootInfo> roots) {
-                if (!isAdded()) {
-                    return;
-                }
-
-                boolean shouldIncludeHandlerApp = getArguments().getBoolean(EXTRA_INCLUDE_APPS,
-                        /* defaultValue= */ false);
-                Intent handlerAppIntent = getArguments().getParcelable(EXTRA_INCLUDE_APPS_INTENT);
-
-                final Intent intent = activity.getIntent();
-                final boolean excludeSelf =
-                        intent.getBooleanExtra(DocumentsContract.EXTRA_EXCLUDE_SELF, false);
-                final String excludePackage = excludeSelf ? activity.getCallingPackage() : null;
-                final boolean maybeShowBadge =
-                        getBaseActivity().getDisplayState().supportsCrossProfile();
-
-                // For action which supports cross profile, update the policy value in state if
-                // necessary.
-                ResolveInfo crossProfileResolveInfo = null;
-                UserManagerState userManagerState = null;
-                if (state.supportsCrossProfile() && handlerAppIntent != null) {
-                    if (state.configStore.isPrivateSpaceInDocsUIEnabled()
-                            && SdkLevel.isAtLeastS()) {
-                        userManagerState = DocumentsApplication.getUserManagerState(getContext());
-                        Map<UserId, Boolean> canForwardToProfileIdMap =
-                                userManagerState.getCanForwardToProfileIdMapForAllowedUsers(intent,
-                                        state);
-                        updateCrossProfileMapStateAndMaybeRefresh(canForwardToProfileIdMap);
-                    } else {
-                        crossProfileResolveInfo = CrossProfileUtils.getCrossProfileResolveInfo(
-                                UserId.CURRENT_USER, getContext().getPackageManager(),
-                                handlerAppIntent, getContext(),
-                                state.configStore.isPrivateSpaceInDocsUIEnabled());
-                        updateCrossProfileStateAndMaybeRefresh(
-                                /* canShareAcrossProfile= */ crossProfileResolveInfo != null);
+                    @NonNull
+                    @Override
+                    public Loader<Collection<ShortcutInfo>> onCreateLoader(
+                            int id, @Nullable Bundle args) {
+                        mArgs = args;
+                        return new ShortcutsLoader(
+                                getContext(), providers, activity.getSelectedUser());
                     }
-                }
 
-                if (state.configStore.isPrivateSpaceInDocsUIEnabled()
-                        && userManagerState == null) {
-                    userManagerState = DocumentsApplication.getUserManagerState(getContext());
-                }
-
-                List<Item> sortedItems = sortLoadResult(
-                        getContext(),
-                        state,
-                        roots,
-                        excludePackage,
-                        shouldIncludeHandlerApp ? handlerAppIntent : null,
-                        DocumentsApplication.getProvidersCache(getContext()),
-                        getBaseActivity().getSelectedUser(),
-                        getUserIds(),
-                        maybeShowBadge,
-                        userManagerState);
-
-                // This will be removed when feature flag is removed.
-                if (crossProfileResolveInfo != null && !Features.CROSS_PROFILE_TABS) {
-                    // Add profile item if we don't support cross-profile tab.
-                    sortedItems.add(new SpacerItem());
-                    if (mUseRailAsContainer) {
-                        sortedItems.add(new NavRailProfileItem(crossProfileResolveInfo,
-                                crossProfileResolveInfo.loadLabel(
-                                        getContext().getPackageManager()).toString(),
-                                mActionHandler));
-                    } else {
-                        sortedItems.add(new ProfileItem(crossProfileResolveInfo,
-                                crossProfileResolveInfo.loadLabel(
-                                        getContext().getPackageManager()).toString(),
-                                mActionHandler));
+                    @Override
+                    public void onLoadFinished(
+                            @NonNull Loader<Collection<ShortcutInfo>> loader,
+                            Collection<ShortcutInfo> shortcuts) {
+                        if (!isHomeScreenFilesFlagEnabled()) {
+                            shortcuts = new ArrayList<>();
+                        }
+                        loadFinished(mLoadedRoots, shortcuts, activity, state);
+                        if (isHomeScreenFilesFlagEnabled()
+                                && mArgs != null
+                                && mArgs.getBoolean(LOADER_REFRESH_ROOT_AND_DIRECTORY_ID)) {
+                            // Only refresh the current window - we don't want to cancel current
+                            // search results.
+                            getBaseActivity()
+                                    .refreshCurrentRootAndDirectoryWithoutSearch(
+                                            AnimationView.ANIM_NONE);
+                        }
                     }
-                }
 
-                // Disable drawer if only one root
-                activity.setRootsDrawerLocked(sortedItems.size() <= 1);
+                    @Override
+                    public void onLoaderReset(@NonNull Loader<Collection<ShortcutInfo>> loader) {
+                        mListHandler.resetAdapter();
+                    }
+                };
 
-                mListHandler.scrollToFirstVisiblePosition(sortedItems, mDragListener);
+        mRootsCallbacks =
+                new LoaderCallbacks<>() {
+                    private Bundle mArgs;
 
-                mInjector.shortcutsUpdater.accept(roots);
-                mInjector.appsRowManager.updateList(mApplicationItemList);
-                mInjector.appsRowManager.updateView(activity);
-                onCurrentRootChanged();
-            }
+                    @Override
+                    public Loader<Collection<RootInfo>> onCreateLoader(int id, Bundle args) {
+                        mArgs = args;
+                        return new RootsLoader(activity, providers, state);
+                    }
 
-            private List<UserId> getUserIds() {
-                if (state.configStore.isPrivateSpaceInDocsUIEnabled() && SdkLevel.isAtLeastS()) {
-                    return DocumentsApplication.getUserManagerState(getContext()).getUserIds();
-                }
-                return DocumentsApplication.getUserIdManager(getContext()).getUserIds();
-            }
+                    @Override
+                    public void onLoadFinished(
+                            Loader<Collection<RootInfo>> loader, Collection<RootInfo> roots) {
+                        if (!isAdded()) {
+                            return;
+                        }
 
-            @Override
-            public void onLoaderReset(Loader<Collection<RootInfo>> loader) {
-                mListHandler.resetAdapter();
-            }
-        };
+                        if (isHomeScreenFilesFlagEnabled()) {
+                            mLoadedRoots = roots;
+                            // Load the shortcut roots next
+                            LoaderManager.getInstance(RootsFragment.this)
+                                    .restartLoader(LoaderIds.SHORTCUTS, mArgs, mShortcutsCallbacks);
+                            mArgs = null;
+                            return;
+                        }
+                        loadFinished(roots, new ArrayList<>(), activity, state);
+                        mArgs = null;
+                    }
+
+                    @Override
+                    public void onLoaderReset(Loader<Collection<RootInfo>> loader) {
+                        mListHandler.resetAdapter();
+                    }
+                };
     }
+
+    @VisibleForTesting
+    public void setDragSpringTimeoutForTest(int testDragSpringTimeout) {
+        if (mDragListener instanceof DragHoverListener) {
+            ((DragHoverListener) mDragListener).setDragSpringTimeoutForTest(testDragSpringTimeout);
+        }
+    }
+
+    public void reloadRootsAndShortcuts(boolean refreshRootAndDirectory) {
+        // Prevent refresh from being overwritten by repetitive calls during config changes.
+        mRefreshPending |= refreshRootAndDirectory;
+        Bundle args = new Bundle();
+        args.putBoolean(LOADER_REFRESH_ROOT_AND_DIRECTORY_ID, mRefreshPending);
+        LoaderManager.getInstance(this).restartLoader(LoaderIds.ROOTS, args, mRootsCallbacks);
+    }
+
+    @VisibleForTesting
+    public void loadFinished(Collection<RootInfo> roots, Collection<ShortcutInfo> shortcuts,
+            BaseActivity activity, State state) {
+        boolean shouldIncludeHandlerApp = getArguments().getBoolean(EXTRA_INCLUDE_APPS,
+            /* defaultValue= */ false);
+        Intent handlerAppIntent = getArguments().getParcelable(EXTRA_INCLUDE_APPS_INTENT);
+
+        final Intent intent = activity.getIntent();
+        final boolean excludeSelf =
+            intent.getBooleanExtra(DocumentsContract.EXTRA_EXCLUDE_SELF, false);
+        final String excludePackage = excludeSelf ? activity.getCallingPackage() : null;
+        final boolean maybeShowBadge =
+            getBaseActivity().getDisplayState().supportsCrossProfile();
+
+        // For action which supports cross profile, update the policy value in state if
+        // necessary.
+        ResolveInfo crossProfileResolveInfo = null;
+        UserManagerState userManagerState = null;
+        if (state.supportsCrossProfile() && handlerAppIntent != null) {
+            if (state.configStore.isPrivateSpaceInDocsUIEnabled()
+                && SdkLevel.isAtLeastS()) {
+                userManagerState = DocumentsApplication.getUserManagerState(getContext());
+                Map<UserId, Boolean> canForwardToProfileIdMap =
+                    userManagerState.getCanForwardToProfileIdMapForAllowedUsers(intent, state);
+                updateCrossProfileMapStateAndMaybeRefresh(canForwardToProfileIdMap);
+            } else {
+                crossProfileResolveInfo = CrossProfileUtils.getCrossProfileResolveInfo(
+                    UserId.CURRENT_USER, getContext().getPackageManager(),
+                    handlerAppIntent, getContext(),
+                    state.configStore.isPrivateSpaceInDocsUIEnabled());
+                updateCrossProfileStateAndMaybeRefresh(
+                    /* canShareAcrossProfile= */ crossProfileResolveInfo != null);
+            }
+        }
+
+        if (state.configStore.isPrivateSpaceInDocsUIEnabled() && userManagerState == null) {
+            userManagerState = DocumentsApplication.getUserManagerState(getContext());
+        }
+
+        List<UserId> userIds;
+        if (state.configStore.isPrivateSpaceInDocsUIEnabled() && SdkLevel.isAtLeastS()) {
+            userIds = DocumentsApplication.getUserManagerState(getContext()).getUserIds();
+        } else {
+            userIds = DocumentsApplication.getUserIdManager(getContext()).getUserIds();
+        }
+
+        List<Item> sortedItems = sortLoadResult(
+            getContext(),
+            state,
+            roots,
+            shortcuts,
+            excludePackage,
+            shouldIncludeHandlerApp ? handlerAppIntent : null,
+            DocumentsApplication.getProvidersCache(getContext()),
+            getBaseActivity().getSelectedUser(),
+            userIds,
+            maybeShowBadge,
+            userManagerState);
+
+        // This will be removed when feature flag is removed.
+        if (crossProfileResolveInfo != null && !Features.CROSS_PROFILE_TABS) {
+            // Add profile item if we don't support cross-profile tab.
+            sortedItems.add(new SpacerItem());
+            if (mUseRailAsContainer) {
+                sortedItems.add(new NavRailProfileItem(crossProfileResolveInfo,
+                    crossProfileResolveInfo.loadLabel(
+                        getContext().getPackageManager()).toString(), mActionHandler));
+            } else {
+                sortedItems.add(new ProfileItem(crossProfileResolveInfo,
+                    crossProfileResolveInfo.loadLabel(
+                        getContext().getPackageManager()).toString(), mActionHandler));
+            }
+        }
+
+        // Disable drawer if only one root
+        activity.setRootsDrawerLocked(sortedItems.size() <= 1);
+
+        mListHandler.scrollToFirstVisiblePosition(sortedItems, mDragListener);
+
+        mInjector.shortcutsUpdater.accept(roots);
+        mInjector.appsRowManager.updateList(mApplicationItemList);
+        mInjector.appsRowManager.updateView(activity);
+        onCurrentRootChanged();
+        mRefreshPending = false;
+    }
+
 
     /**
      * Updates the state values of whether we can share across profiles, if necessary. Also reload
@@ -429,6 +518,7 @@ public class RootsFragment extends Fragment {
             Context context,
             State state,
             Collection<RootInfo> roots,
+            Collection<ShortcutInfo> shortcuts,
             @Nullable String excludePackage,
             @Nullable Intent handlerAppIntent,
             ProvidersAccess providersAccess,
@@ -442,20 +532,60 @@ public class RootsFragment extends Fragment {
         final RootItemListBuilder storageProvidersBuilder = new RootItemListBuilder(selectedUser,
                 userIds);
         final List<RootItem> otherProviders = new ArrayList<>();
+        final List<Item> trashItems = new ArrayList<>();
         final boolean hideMediaRoots =
                 isUseMaterial3FlagEnabled()
                         && !context.getResources().getBoolean(R.bool.show_media_roots);
+
+        boolean hasDownloadsOverlay = false;
+
+        final List<BaseSidebarEntryItem> librariesAndShortcuts = new ArrayList<>();
+        if (isHomeScreenFilesFlagEnabled()) {
+            // Handle the shortcuts next. The shortcuts passed in are specific to the user. So we
+            // can just create and add the shortcut items normally as it should already account for
+            // cross profile behaviour.
+            for (final ShortcutInfo shortcut : shortcuts) {
+                if (shortcut.getDerivedType() == SidebarEntryItemInfo.TYPE_DOWNLOADS) {
+                    hasDownloadsOverlay = true;
+                }
+                final ShortcutItem item =
+                        mUseRailAsContainer
+                                ? new NavRailShortcutItem(
+                                        shortcut,
+                                        mActionHandler,
+                                        /* packageName= */ "",
+                                        maybeShowBadge)
+                                : new ShortcutItem(
+                                        shortcut,
+                                        mActionHandler,
+                                        /* packageName= */ "",
+                                        maybeShowBadge);
+                librariesAndShortcuts.add(item);
+            }
+        }
 
         for (final RootInfo root : roots) {
             final RootItem item;
 
             if (root.isExternalStorageHome()) {
                 // No-op.
+            } else if (root.isFiles()) {
+                // Never show this if MediaDocumentsProvider is serving it, it's for Recents only.
+            } else if (root.isLocalSearch(context)) {
+                // Local search provider is integrated with other providers, not to browse the
+                // files.
             } else if (hideMediaRoots
-                    && (root.isImages() || root.isVideos()
-                    || root.isDocuments()
-                    || root.isAudio())) {
+                    && (root.isImages()
+                            || root.isVideos()
+                            || root.isDocuments()
+                            || root.isAudio())) {
                 Log.d(TAG, "Hiding " + root);
+            } else if (isHomeScreenFilesFlagEnabled()
+                    && root.isDownloads()
+                    && hasDownloadsOverlay) {
+                // Hide the DownloadStorageProvider root if we have a shortcut to the Downloads
+                // folder via ExternalStorageProvider.
+                Log.d(TAG, "Hiding DownloadStorageProvider root: " + root);
             } else if (root.isLibrary() || root.isDownloads()) {
                 item =
                         mUseRailAsContainer
@@ -468,7 +598,13 @@ public class RootsFragment extends Fragment {
                                 ? new NavRailRootItem(root, mActionHandler, maybeShowBadge)
                                 : new RootItem(root, mActionHandler, maybeShowBadge);
                 storageProvidersBuilder.add(item);
-            } else {
+            } else if (isTrashFlowEnabled() && root.isTrash()) {
+                item =
+                        mUseRailAsContainer
+                                ? new NavRailRootItem(root, mActionHandler, maybeShowBadge)
+                                : new RootItem(root, mActionHandler, maybeShowBadge);
+                trashItems.add(item);
+            } else if (root.authority != null) {
                 item =
                         mUseRailAsContainer
                                 ? new NavRailRootItem(
@@ -485,15 +621,28 @@ public class RootsFragment extends Fragment {
             }
         }
 
+        final RootComparator comp = new RootComparator();
         final List<RootItem> libraries = librariesBuilder.getList();
         final List<RootItem> storageProviders = storageProvidersBuilder.getList();
 
-        final RootComparator comp = new RootComparator();
-        Collections.sort(libraries, comp);
-        Collections.sort(storageProviders, comp);
+        if (isHomeScreenFilesFlagEnabled()) {
+            final SidebarEntryItemComparator sidebarItemComp = new SidebarEntryItemComparator();
+            librariesAndShortcuts.addAll(libraries);
+            Collections.sort(librariesAndShortcuts, sidebarItemComp);
+            Collections.sort(storageProviders, comp);
 
-        if (VERBOSE) Log.v(TAG, "Adding library roots: " + libraries);
-        result.addAll(libraries);
+            if (VERBOSE) {
+                Log.v(TAG, "Adding library roots and system defined shortcuts: "
+                        + librariesAndShortcuts);
+            }
+            result.addAll(librariesAndShortcuts);
+        } else {
+            Collections.sort(libraries, comp);
+            Collections.sort(storageProviders, comp);
+
+            if (VERBOSE) Log.v(TAG, "Adding library roots: " + libraries);
+            result.addAll(libraries);
+        }
 
         // Only add the spacer if it is actually separating something.
         if (!result.isEmpty() && !storageProviders.isEmpty()) {
@@ -502,9 +651,9 @@ public class RootsFragment extends Fragment {
         if (VERBOSE) Log.v(TAG, "Adding storage roots: " + storageProviders);
         result.addAll(storageProviders);
 
-        final List<Item> rootList = new ArrayList<>();
-        final List<Item> rootListOtherUser = new ArrayList<>();
-        final List<List<Item>> rootListAllUsers = new ArrayList<>();
+        final List<SortableItem> rootList = new ArrayList<>();
+        final List<SortableItem> rootListOtherUser = new ArrayList<>();
+        final List<List<SortableItem>> rootListAllUsers = new ArrayList<>();
         for (int i = 0; i < userIds.size(); ++i) {
             rootListAllUsers.add(new ArrayList<>());
         }
@@ -532,13 +681,34 @@ public class RootsFragment extends Fragment {
                         context, state, rootListAllUsers, userIds, userManagerState) :
                         getPresentableListPrivateSpaceDisabled(context, state, rootList,
                                 rootListOtherUser);
-        addListToResult(result, presentableList);
+
+        if (isHomeScreenFilesFlagEnabled()) {
+            List<Item> presentableListWithDivider = new ArrayList<>();
+            boolean hasBaseSidebarItems = false;
+            for (Item item : presentableList) {
+                if (item instanceof BaseSidebarEntryItem) {
+                    hasBaseSidebarItems = true;
+                }
+                if (hasBaseSidebarItems && item instanceof AppItem) {
+                    presentableListWithDivider.add(new SpacerItem());
+                    hasBaseSidebarItems = false;
+                }
+                presentableListWithDivider.add(item);
+            }
+            result.addAll(presentableListWithDivider);
+        } else {
+            addListToResult(result, presentableList);
+        }
+        addListToResult(result, trashItems);
         return result;
     }
 
     @RequiresApi(Build.VERSION_CODES.S)
-    private List<Item> getPresentableListPrivateSpaceEnabled(Context context, State state,
-            List<List<Item>> rootListAllUsers, List<UserId> userIds,
+    private List<Item> getPresentableListPrivateSpaceEnabled(
+            Context context,
+            State state,
+            List<List<SortableItem>> rootListAllUsers,
+            List<UserId> userIds,
             UserManagerState userManagerState) {
         return new UserItemsCombiner(
                         context.getResources(),
@@ -549,8 +719,11 @@ public class RootsFragment extends Fragment {
                 .createPresentableListForAllUsers(userIds, userManagerState.getUserIdToLabelMap());
     }
 
-    private List<Item> getPresentableListPrivateSpaceDisabled(Context context, State state,
-            List<Item> rootList, List<Item> rootListOtherUser) {
+    private List<Item> getPresentableListPrivateSpaceDisabled(
+            Context context,
+            State state,
+            List<SortableItem> rootList,
+            List<SortableItem> rootListOtherUser) {
         return new UserItemsCombiner(
                         context.getResources(),
                         context.getSystemService(UserManager.class),
@@ -569,18 +742,24 @@ public class RootsFragment extends Fragment {
     }
 
     /**
-     * Adds apps capable of handling the original intent will be included in list of roots. If
-     * the providers and apps are the same package name, combine them as RootAndAppItems.
+     * Adds apps capable of handling the original intent will be included in list of roots. If the
+     * providers and apps are the same package name, combine them as RootAndAppItems.
      */
-    private void includeHandlerApps(State state,
-            Intent handlerAppIntent, @Nullable String excludePackage, List<Item> rootList,
-            List<Item> rootListOtherUser, List<List<Item>> rootListAllUsers,
-            List<RootItem> otherProviders, List<UserId> userIds, boolean maybeShowBadge) {
+    private void includeHandlerApps(
+            State state,
+            Intent handlerAppIntent,
+            @Nullable String excludePackage,
+            List<SortableItem> rootList,
+            List<SortableItem> rootListOtherUser,
+            List<List<SortableItem>> rootListAllUsers,
+            List<RootItem> otherProviders,
+            List<UserId> userIds,
+            boolean maybeShowBadge) {
         if (VERBOSE) Log.v(TAG, "Adding handler apps for intent: " + handlerAppIntent);
 
         Context context = getContext();
         final Map<UserPackage, ResolveInfo> appsMapping = new HashMap<>();
-        final Map<UserPackage, Item> appItems = new HashMap<>();
+        final Map<UserPackage, SortableItem> appItems = new HashMap<>();
 
         final String myPackageName = context.getPackageName();
         for (UserId userId : userIds) {
@@ -630,7 +809,7 @@ public class RootsFragment extends Fragment {
                     appsMapping.put(userPackage, info);
 
                     if (!CrossProfileUtils.isCrossProfileIntentForwarderActivity(info)) {
-                        final Item item =
+                        final SortableItem item =
                                 mUseRailAsContainer
                                         ? new NavRailAppItem(
                                                 info,
@@ -655,7 +834,7 @@ public class RootsFragment extends Fragment {
                     rootItem.getPackageName());
             final ResolveInfo resolveInfo = appsMapping.get(userPackage);
 
-            final Item item;
+            final SortableItem item;
             if (resolveInfo != null) {
                 item =
                         mUseRailAsContainer
@@ -675,7 +854,7 @@ public class RootsFragment extends Fragment {
             }
         }
 
-        for (Item item : appItems.values()) {
+        for (SortableItem item : appItems.values()) {
             if (state.configStore.isPrivateSpaceInDocsUIEnabled()) {
                 createRootListsPrivateSpaceEnabled(item, userIds, rootListAllUsers);
             } else {
@@ -685,18 +864,25 @@ public class RootsFragment extends Fragment {
 
         final String preferredRootPackage =
                 getResources().getString(getRes(R.string.preferred_root_package), "");
-        final ItemComparator comp = new ItemComparator(preferredRootPackage);
+        Comparator<SortableItem> comp;
+        if (isHomeScreenFilesFlagEnabled()) {
+            comp = new SortableItemComparator();
+        } else {
+            comp = new ItemComparator(preferredRootPackage);
+        }
 
         if (state.configStore.isPrivateSpaceInDocsUIEnabled()) {
             addToApplicationItemListPrivateSpaceEnabled(userIds, rootListAllUsers, comp, state);
         } else {
             addToApplicationItemListPrivateSpaceDisabled(rootList, rootListOtherUser, comp, state);
         }
-
     }
 
-    private void addToApplicationItemListPrivateSpaceEnabled(List<UserId> userIds,
-            List<List<Item>> rootListAllUsers, ItemComparator comp, State state) {
+    private void addToApplicationItemListPrivateSpaceEnabled(
+            List<UserId> userIds,
+            List<List<SortableItem>> rootListAllUsers,
+            Comparator<SortableItem> comp,
+            State state) {
         for (int i = 0; i < userIds.size(); ++i) {
             rootListAllUsers.get(i).sort(comp);
             if (UserId.CURRENT_USER.equals(userIds.get(i))) {
@@ -707,8 +893,11 @@ public class RootsFragment extends Fragment {
         }
     }
 
-    private void addToApplicationItemListPrivateSpaceDisabled(List<Item> rootList,
-            List<Item> rootListOtherUser, ItemComparator comp, State state) {
+    private void addToApplicationItemListPrivateSpaceDisabled(
+            List<SortableItem> rootList,
+            List<SortableItem> rootListOtherUser,
+            Comparator<SortableItem> comp,
+            State state) {
         rootList.sort(comp);
         rootListOtherUser.sort(comp);
         if (state.supportsCrossProfile() && state.canShareAcrossProfile) {
@@ -719,8 +908,8 @@ public class RootsFragment extends Fragment {
         }
     }
 
-    private void createRootListsPrivateSpaceEnabled(Item item, List<UserId> userIds,
-            List<List<Item>> rootListAllUsers) {
+    private void createRootListsPrivateSpaceEnabled(
+            SortableItem item, List<UserId> userIds, List<List<SortableItem>> rootListAllUsers) {
         for (int i = 0; i < userIds.size(); ++i) {
             if (userIds.get(i).equals(item.userId)) {
                 rootListAllUsers.get(i).add(item);
@@ -729,8 +918,8 @@ public class RootsFragment extends Fragment {
         }
     }
 
-    private void createRootListsPrivateSpaceDisabled(Item item, List<Item> rootList,
-            List<Item> rootListOtherUser) {
+    private void createRootListsPrivateSpaceDisabled(
+            SortableItem item, List<SortableItem> rootList, List<SortableItem> rootListOtherUser) {
         if (UserId.CURRENT_USER.equals(item.userId)) {
             rootList.add(item);
         } else {
@@ -753,7 +942,7 @@ public class RootsFragment extends Fragment {
     public void onDisplayStateChanged() {
         mListHandler.onDisplayStateChange();
 
-        LoaderManager.getInstance(this).restartLoader(2, null, mCallbacks);
+        reloadRootsAndShortcuts(/* refreshRootAndDirectory= */ false);
     }
 
     public void onCurrentRootChanged() {
@@ -761,16 +950,36 @@ public class RootsFragment extends Fragment {
             return;
         }
 
-        final RootInfo root = ((BaseActivity) getActivity()).getCurrentRoot();
-        for (int i = 0; i < mListHandler.getItemCount(); i++) {
-            final Object item = mListHandler.getItem(i);
-            if (item instanceof RootItem) {
-                final RootInfo testRoot = ((RootItem) item).root;
-                if (Objects.equals(testRoot, root)) {
-                    // b/37358441 should reload all root title after configuration changed
-                    root.title = testRoot.title;
-                    mListHandler.selectItem(i);
-                    return;
+        if (isHomeScreenFilesFlagEnabled()) {
+            SidebarEntryItemInfo itemInfo = getBaseActivity().getCurrentShortcut();
+            if (itemInfo == null) {
+                itemInfo = getBaseActivity().getCurrentRoot();
+            }
+            for (int i = 0; i < mListHandler.getItemCount(); i++) {
+                final Object item = mListHandler.getItem(i);
+                if (item instanceof BaseSidebarEntryItem) {
+                    final SidebarEntryItemInfo testInfo =
+                            ((BaseSidebarEntryItem) item).getItemInfo();
+                    if (Objects.equals(testInfo.getUri(), itemInfo.getUri())) {
+                        // TODO: (b/465888139) - Remove the line below after finding a way to
+                        //  update stale shortcut after a language change.
+                        itemInfo.setTitle(testInfo.getTitle());
+                        mListHandler.selectItem(i);
+                        return;
+                    }
+                }
+            }
+        } else {
+            final RootInfo root = ((BaseActivity) getActivity()).getCurrentRoot();
+            for (int i = 0; i < mListHandler.getItemCount(); i++) {
+                final Object item = mListHandler.getItem(i);
+                if (item instanceof RootItem) {
+                    final RootInfo testRoot = ((RootItem) item).root;
+                    if (Objects.equals(testRoot, root)) {
+                        root.title = testRoot.title;
+                        mListHandler.selectItem(i);
+                        return;
+                    }
                 }
             }
         }
@@ -780,7 +989,7 @@ public class RootsFragment extends Fragment {
      * Called when the selected user is changed. It reloads roots with the current user.
      */
     public void onSelectedUserChanged() {
-        LoaderManager.getInstance(this).restartLoader(/* id= */ 2, /* args= */ null, mCallbacks);
+        reloadRootsAndShortcuts(/* refreshRootAndDirectory= */ false);
     }
 
     /**
@@ -813,24 +1022,70 @@ public class RootsFragment extends Fragment {
         if (item == null) {
             return false;
         }
-        final RootItem rootItem = (RootItem) item;
+        final BaseSidebarEntryItem sidebarItem = (BaseSidebarEntryItem) item;
         final int id = menuItem.getItemId();
         if (id == getRes(R.id.root_menu_eject_root)) {
+            // This option should be hidden for shortcuts.
             View itemView = mListHandler.getItemViewForContextMenu(menuItem.getMenuInfo());
             if (itemView == null) {
                 return false;
             }
             final View ejectIcon = itemView.findViewById(getRes(R.id.action_icon));
-            ejectClicked(ejectIcon, rootItem.root, mActionHandler);
+            ejectClicked(ejectIcon, sidebarItem.getItemInfo().getRoot(), mActionHandler);
             return true;
         } else if (id == getRes(R.id.root_menu_open_in_new_window)) {
-            mActionHandler.openInNewWindow(new DocumentStack(rootItem.root));
+            Runnable openInNewWindowRunnable =
+                    () -> {
+                        if (sidebarItem instanceof RootItem) {
+                            mActionHandler.openInNewWindow(
+                                    new DocumentStack(
+                                            sidebarItem.getItemInfo().getRoot(),
+                                            sidebarItem.getDocInfo()),
+                                    null);
+                        } else if (isHomeScreenFilesFlagEnabled()
+                                && sidebarItem instanceof ShortcutItem) {
+                            ShortcutInfo shortcut = (ShortcutInfo) sidebarItem.getItemInfo();
+                            mActionHandler.openInNewWindow(
+                                    new DocumentStack(shortcut.getRoot(), sidebarItem.getDocInfo()),
+                                    shortcut);
+                        }
+                    };
+            if (sidebarItem.getDocInfo() == null) {
+                mActionHandler.getDocument(
+                        sidebarItem.getItemInfo().getRoot().authority,
+                        sidebarItem.getItemInfo().getDocumentId(),
+                        sidebarItem.getItemInfo().getRoot().userId,
+                        TimeoutTask.DEFAULT_TIMEOUT,
+                        (docInfo) -> {
+                            if (docInfo != null) {
+                                sidebarItem.setDocInfo(docInfo);
+                                openInNewWindowRunnable.run();
+                            }
+                        });
+            } else {
+                openInNewWindowRunnable.run();
+            }
             return true;
         } else if (id == getRes(R.id.root_menu_paste_into_folder)) {
-            mActionHandler.pasteIntoFolder(rootItem.root);
+            mActionHandler.pasteIntoFolder(sidebarItem.getItemInfo());
             return true;
-        } else if (id == getRes(R.id.root_menu_settings)) {
-            mActionHandler.openSettings(rootItem.root);
+        } else if (id == getRes(R.id.root_menu_settings)
+                || (id == getRes(R.id.root_menu_manage_device))) {
+            mActionHandler.openSettings(sidebarItem.getItemInfo().getRoot());
+            return true;
+        } else if (id == getRes(R.id.root_menu_inspect)) {
+            if (!isHomeScreenFilesFlagEnabled()
+                    || !(sidebarItem instanceof ShortcutItem)) {
+                return false;
+            }
+            ShortcutInfo shortcut = (ShortcutInfo) sidebarItem.getItemInfo();
+            mActionHandler.getDocument(
+                    shortcut.getRoot().authority,
+                    shortcut.getDocumentId(),
+                    shortcut.getRoot().userId,
+                    TimeoutTask.DEFAULT_TIMEOUT,
+                    mActionHandler::showPreview
+            );
             return true;
         }
         if (DEBUG) {
@@ -839,15 +1094,15 @@ public class RootsFragment extends Fragment {
         return false;
     }
 
-    private void getRootDocument(RootItem rootItem, RootUpdater updater) {
-        // We need to start a GetRootDocumentTask so we can know whether items can be directly
+    private void getSidebarItemDocument(BaseSidebarEntryItem sidebarItem, RootUpdater updater) {
+        // We need to start a GetDocumentTask so we can know whether items can be directly
         // pasted into root
-        mActionHandler.getRootDocument(
-                rootItem.root,
+        mActionHandler.getDocument(
+                sidebarItem.getItemInfo().getRoot().authority,
+                sidebarItem.getItemInfo().getDocumentId(),
+                sidebarItem.getItemInfo().getRoot().userId,
                 CONTEXT_MENU_ITEM_TIMEOUT,
-                (DocumentInfo doc) -> {
-                    updater.updateDocInfoForRoot(doc);
-                });
+                updater::updateDocInfoForRoot);
     }
 
     private Item getItem(View v) {
@@ -884,14 +1139,41 @@ public class RootsFragment extends Fragment {
         }
     }
 
+    private static class SidebarEntryItemComparator implements Comparator<BaseSidebarEntryItem> {
+        @Override
+        public int compare(BaseSidebarEntryItem lhs, BaseSidebarEntryItem rhs) {
+            return lhs.getItemInfo().compareTo(rhs.getItemInfo());
+        }
+    }
+
     /**
-     * The comparator of {@link AppItem}, {@link RootItem} and {@link RootAndAppItem}.
-     * Sort by if the item's package name starts with the preferred package name,
-     * then title, then summary. Because the {@link AppItem} doesn't have summary,
-     * it will have lower order than other same title items.
+     * The comparator of {@link SortableItem} which compares the list of other document providers
+     * and apps (e.g. cloud providers and apps like the photopicker). {@link BaseSidebarEntryItem}
+     * has priority over {@link AppItem}. If the two items are of the same type, compare by title.
      */
     @VisibleForTesting
-    static class ItemComparator implements Comparator<Item> {
+    static class SortableItemComparator implements Comparator<SortableItem> {
+        @Override
+        public int compare(SortableItem lhs, SortableItem rhs) {
+            // AppItems have less priority over BaseSidebarEntryItems.
+            int score = lhs.getItemType() - rhs.getItemType();
+            if (score != 0) {
+                return score;
+            }
+
+            // Sort by title.
+            return compareToIgnoreCaseNullable(lhs.getTitle(), rhs.getTitle());
+        }
+    }
+
+    /**
+     * The comparator of {@link AppItem}, {@link RootItem} and {@link RootAndAppItem}. Sort by if
+     * the item's package name starts with the preferred package name, then title, then summary.
+     * Because the {@link AppItem} doesn't have summary, it will have lower order than other same
+     * title items.
+     */
+    @VisibleForTesting
+    static class ItemComparator implements Comparator<SortableItem> {
         private final String mPreferredPackageName;
 
         ItemComparator(String preferredPackageName) {
@@ -899,7 +1181,7 @@ public class RootsFragment extends Fragment {
         }
 
         @Override
-        public int compare(Item lhs, Item rhs) {
+        public int compare(SortableItem lhs, SortableItem rhs) {
             // Sort by whether the item starts with preferred package name
             if (!mPreferredPackageName.isEmpty()) {
                 if (lhs.getPackageName().startsWith(mPreferredPackageName)) {
@@ -916,7 +1198,7 @@ public class RootsFragment extends Fragment {
             }
 
             // Sort by title
-            int score = compareToIgnoreCaseNullable(lhs.title, rhs.title);
+            int score = compareToIgnoreCaseNullable(lhs.getTitle(), rhs.getTitle());
             if (score != 0) {
                 return score;
             }

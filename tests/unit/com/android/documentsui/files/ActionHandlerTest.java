@@ -16,13 +16,13 @@
 
 package com.android.documentsui.files;
 
+import static android.provider.Flags.FLAG_ENABLE_DOCUMENTS_TRASH_API;
+import static android.provider.Flags.FLAG_ENABLE_SYNC_STATE;
+
 import static com.android.documentsui.testing.IntentAsserts.assertHasAction;
-import static com.android.documentsui.testing.IntentAsserts.assertHasData;
-import static com.android.documentsui.testing.IntentAsserts.assertHasExtra;
 import static com.android.documentsui.testing.IntentAsserts.assertHasExtraIntent;
 import static com.android.documentsui.testing.IntentAsserts.assertHasExtraList;
 import static com.android.documentsui.testing.IntentAsserts.assertHasExtraUri;
-import static com.android.documentsui.testing.IntentAsserts.assertTargetsComponent;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.FlagUtils.isUsePeekPreviewFlagEnabled;
 import static com.android.documentsui.util.FlagUtils.isZipNgFlagEnabled;
@@ -34,44 +34,50 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import android.app.Activity;
 import android.app.DownloadManager;
 import android.app.PendingIntent;
 import android.content.ClipData;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Parcelable;
 import android.platform.test.annotations.DisableFlags;
 import android.platform.test.annotations.EnableFlags;
-import android.platform.test.annotations.RequiresFlagsDisabled;
 import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
 import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Path;
-import android.util.Pair;
 import android.view.DragEvent;
 
-import androidx.core.util.Preconditions;
 import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.MediumTest;
+import androidx.test.filters.SdkSuppress;
 
 import com.android.documentsui.AbstractActionHandler;
+import com.android.documentsui.DragAndDropManager;
+import com.android.documentsui.DragAndDropManager.Permissions;
 import com.android.documentsui.ModelId;
 import com.android.documentsui.R;
 import com.android.documentsui.TestActionModeAddons;
 import com.android.documentsui.TestConfigStore;
 import com.android.documentsui.archives.ArchivesProvider;
-import com.android.documentsui.base.DebugFlags;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.DocumentStack;
 import com.android.documentsui.base.RootInfo;
 import com.android.documentsui.base.Shared;
+import com.android.documentsui.base.SidebarEntryItemInfo;
 import com.android.documentsui.flags.Flags;
-import com.android.documentsui.inspector.InspectorActivity;
 import com.android.documentsui.rules.OverrideFlagsRule;
 import com.android.documentsui.testing.ClipDatas;
 import com.android.documentsui.testing.DocumentStackAsserts;
@@ -90,6 +96,9 @@ import com.android.modules.utils.build.SdkLevel;
 
 import com.google.common.collect.Lists;
 
+import kotlin.Triple;
+
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Rule;
@@ -104,6 +113,7 @@ import org.mockito.MockitoAnnotations;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.BiFunction;
 
 @RunWith(Parameterized.class)
 @MediumTest
@@ -121,11 +131,10 @@ public class ActionHandlerTest {
     private TestConfigStore mTestConfigStore;
     private boolean refreshAnswer = false;
     @Mock private Runnable mMockCloseSelectionBar;
+    @Mock private BiFunction<Activity, DragEvent, Permissions> mMockRequestPermissionsHandler;
 
     @Rule
     public final OverrideFlagsRule mOverrideFlagsRule = new OverrideFlagsRule();
-
-    // TODO(b/433858983): Remove CheckFlagsRule once peek is overridable in FlagUtils.
     @Rule
     public final CheckFlagsRule mCheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule();
 
@@ -143,7 +152,7 @@ public class ActionHandlerTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
+        MockitoAnnotations.openMocks(this);
         mFeatures = new TestFeatures();
         mEnv = TestEnv.create(mFeatures);
         mActivity = TestActivity.create(mEnv);
@@ -155,6 +164,9 @@ public class ActionHandlerTest {
         mPeekViewManager = isUsePeekPreviewFlagEnabled() ? new TestPeekViewManager() : null;
         mTestConfigStore = new TestConfigStore();
         mEnv.state.configStore = mTestConfigStore;
+
+        DragAndDropManager.REQUEST_PERMISSIONS_HANDLER_FOR_TESTING.set(
+                mMockRequestPermissionsHandler);
 
         isPrivateSpaceEnabled &= SdkLevel.isAtLeastS();
         if (isPrivateSpaceEnabled) {
@@ -171,9 +183,18 @@ public class ActionHandlerTest {
         mEnv.selectDocument(TestEnv.FILE_GIF);
     }
 
+    @After
+    public void tearDown() {
+        DragAndDropManager.REQUEST_PERMISSIONS_HANDLER_FOR_TESTING.set(null);
+    }
+
     private void assertSelectionContainerClosed() {
+        assertSelectionContainerClosed(/* wantedNumberOfInvocations */ 1);
+    }
+
+    private void assertSelectionContainerClosed(int wantedNumberOfInvocations) {
         if (isUseMaterial3FlagEnabled()) {
-            verify(mMockCloseSelectionBar, times(1)).run();
+            verify(mMockCloseSelectionBar, times(wantedNumberOfInvocations)).run();
         } else {
             assertTrue(mActionModeAddons.finishActionModeCalled);
         }
@@ -227,6 +248,17 @@ public class ActionHandlerTest {
     }
 
     @Test
+    public void testCutSelectedDocuments() {
+        mEnv.populateStack();
+        mEnv.selectDocument(TestEnv.FILE_PDF);
+
+        mHandler.cutToClipboard();
+        mDialogs.assertDocumentsClippedShown();
+        mDialogs.assertOperationUnsupportedNotShown();
+        mClipper.clipForCut.assertCalled();
+    }
+
+    @Test
     public void testCutSelectedDocuments_NoGivenSelection() {
         mEnv.populateStack();
 
@@ -247,6 +279,69 @@ public class ActionHandlerTest {
     }
 
     @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @EnableFlags({Flags.FLAG_CLOUD_FEATURES, Flags.FLAG_USE_MATERIAL3})
+    public void testCutSelectedDocuments_ContainsUnavailableDocument() {
+        mEnv.populateStack();
+        mEnv.selectDocument(TestEnv.FILE_PDF);
+
+        ((TestActivityConfig) mEnv.injector.config)
+                .documentsWithUnavailableContent.add(TestEnv.FILE_PDF.documentId);
+
+        mHandler.cutToClipboard();
+        mDialogs.assertDocumentsClippedNotShown();
+        mDialogs.assertShowOperationUnsupported();
+        mClipper.clipForCut.assertNotCalled();
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @EnableFlags({Flags.FLAG_CLOUD_FEATURES, Flags.FLAG_USE_MATERIAL3})
+    public void testCutSelectedDocuments_ContainsUnavailableDocument_AndAvailableDocument() {
+        mEnv.populateStack();
+        mEnv.selectDocument(TestEnv.FILE_PDF);
+        mEnv.selectDocument(TestEnv.FILE_APK);
+
+        ((TestActivityConfig) mEnv.injector.config)
+                .documentsWithUnavailableContent.add(TestEnv.FILE_PDF.documentId);
+
+        mHandler.cutToClipboard();
+        mDialogs.assertDocumentsClippedNotShown();
+        mDialogs.assertShowOperationUnsupported();
+        mClipper.clipForCut.assertNotCalled();
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @DisableFlags(Flags.FLAG_CLOUD_FEATURES)
+    public void testCutSelectedDocuments_ContainsUnavailableDocument_FeatureFlagDisabled() {
+        mEnv.populateStack();
+        mEnv.selectDocument(TestEnv.FILE_PDF);
+
+        ((TestActivityConfig) mEnv.injector.config)
+                .documentsWithUnavailableContent.add(TestEnv.FILE_PDF.documentId);
+
+        mHandler.cutToClipboard();
+        mDialogs.assertDocumentsClippedShown();
+        mDialogs.assertOperationUnsupportedNotShown();
+        mClipper.clipForCut.assertCalled();
+    }
+
+    @Test
+    public void testCopySelectedDocuments() {
+        mEnv.populateStack();
+        mEnv.selectDocument(TestEnv.FILE_PDF);
+
+        mHandler.copyToClipboard();
+        mDialogs.assertDocumentsClippedShown();
+        mDialogs.assertOperationUnsupportedNotShown();
+        mClipper.clipForCopy.assertCalled();
+    }
+
+    @Test
     public void testCopySelectedDocuments_NoGivenSelection() {
         mEnv.populateStack();
 
@@ -256,28 +351,55 @@ public class ActionHandlerTest {
     }
 
     @Test
-    public void testShowDeleteDialog_NoSelection() {
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @EnableFlags({Flags.FLAG_CLOUD_FEATURES, Flags.FLAG_USE_MATERIAL3})
+    public void testCopySelectedDocuments_ContainsUnavailableDocument() {
         mEnv.populateStack();
+        mEnv.selectDocument(TestEnv.FILE_PDF);
 
-        mEnv.selectionMgr.clearSelection();
-        mHandler.showDeleteDialog();
-        mActivity.startService.assertNotCalled();
-        assertFalse(mActionModeAddons.finishActionModeCalled);
+        ((TestActivityConfig) mEnv.injector.config)
+                .documentsWithUnavailableContent.add(TestEnv.FILE_PDF.documentId);
+
+        mHandler.copyToClipboard();
+        mDialogs.assertDocumentsClippedNotShown();
+        mDialogs.assertShowOperationUnsupported();
+        mClipper.clipForCopy.assertNotCalled();
     }
 
     @Test
-    public void testDeleteSelectedDocuments() {
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @EnableFlags({Flags.FLAG_CLOUD_FEATURES, Flags.FLAG_USE_MATERIAL3})
+    public void testCopySelectedDocuments_ContainsUnavailableDocument_AndAvailableDocument() {
         mEnv.populateStack();
+        mEnv.selectDocument(TestEnv.FILE_PDF);
+        mEnv.selectDocument(TestEnv.FILE_JPG);
 
-        mEnv.selectionMgr.clearSelection();
-        mEnv.selectDocument(TestEnv.FILE_PNG);
+        ((TestActivityConfig) mEnv.injector.config)
+                .documentsWithUnavailableContent.add(TestEnv.FILE_JPG.documentId);
 
-        List<DocumentInfo> docs = new ArrayList<>();
-        docs.add(TestEnv.FILE_PNG);
-        mHandler.deleteSelectedDocuments(docs, mEnv.state.stack.peek());
+        mHandler.copyToClipboard();
+        mDialogs.assertDocumentsClippedNotShown();
+        mDialogs.assertShowOperationUnsupported();
+        mClipper.clipForCopy.assertNotCalled();
+    }
 
-        mActivity.startService.assertCalled();
-        assertSelectionContainerClosed();
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @DisableFlags(Flags.FLAG_CLOUD_FEATURES)
+    public void testCopySelectedDocuments_ContainsUnavailableDocument_FeatureFlagDisabled() {
+        mEnv.populateStack();
+        mEnv.selectDocument(TestEnv.FILE_PDF);
+
+        ((TestActivityConfig) mEnv.injector.config)
+                .documentsWithUnavailableContent.add(TestEnv.FILE_PDF.documentId);
+
+        mHandler.copyToClipboard();
+        mDialogs.assertDocumentsClippedShown();
+        mDialogs.assertOperationUnsupportedNotShown();
+        mClipper.clipForCopy.assertCalled();
     }
 
     @Test
@@ -293,6 +415,92 @@ public class ActionHandlerTest {
 
         mActivity.startService.assertCalled();
         assertSelectionContainerClosed();
+    }
+
+    /** Verifies that trashable documents are trashed when the trash feature is enabled. */
+    @Test
+    @RequiresFlagsEnabled({FLAG_ENABLE_DOCUMENTS_TRASH_API})
+    @EnableFlags({Flags.FLAG_USE_MATERIAL3, Flags.FLAG_ENABLE_TRASH_FLOW_RO})
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    public void testRunDeleteOrTrashHandler_trashesTrashableDocuments_whenTrashIsEnabled() {
+        mEnv.populateStack();
+        mEnv.selectionMgr.clearSelection();
+
+        ActionHandler<TestActivity> handlerSpy = spy(mHandler);
+        doNothing().when(handlerSpy).trashSelectedDocuments();
+
+        final DocumentInfo trashableDoc =
+                mEnv.model.createDocument(
+                        "trashable-doc",
+                        "plain/text",
+                        DocumentsContract.Document.FLAG_SUPPORTS_TRASH);
+        mEnv.model.update();
+        mEnv.selectDocument(trashableDoc);
+
+        handlerSpy.runDeleteOrTrashHandler();
+
+        verify(handlerSpy).trashSelectedDocuments();
+    }
+
+    /** Verifies that non-trashable documents are deleted when the trash feature is enabled. */
+    @Test
+    @RequiresFlagsEnabled({FLAG_ENABLE_DOCUMENTS_TRASH_API})
+    @EnableFlags({Flags.FLAG_USE_MATERIAL3, Flags.FLAG_ENABLE_TRASH_FLOW_RO})
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    public void testRunDeleteOrTrashHandler_deletesNonTrashableDocuments_whenTrashIsEnabled() {
+        mEnv.populateStack();
+        mEnv.selectionMgr.clearSelection();
+
+        ActionHandler<TestActivity> handlerSpy = spy(mHandler);
+        doNothing().when(handlerSpy).showDeleteDialog();
+
+        final DocumentInfo nonTrashableDoc =
+                mEnv.model.createDocument("non-trashable-doc", "plain/text", 0);
+        mEnv.model.update();
+        mEnv.selectDocument(nonTrashableDoc);
+
+        handlerSpy.runDeleteOrTrashHandler();
+
+        verify(handlerSpy).showDeleteDialog();
+    }
+
+    /**
+     * Verifies that all documents are deleted when the trash feature is disabled, regardless of
+     * their individual trash support.
+     */
+    @Test
+    @RequiresFlagsEnabled({FLAG_ENABLE_DOCUMENTS_TRASH_API})
+    @DisableFlags({Flags.FLAG_USE_MATERIAL3, Flags.FLAG_ENABLE_TRASH_FLOW_RO})
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    public void testRunDeleteOrTrashHandler_deletesAllDocuments_whenTrashIsDisabled() {
+        mEnv.populateStack();
+        mEnv.selectionMgr.clearSelection();
+
+        ActionHandler<TestActivity> handlerSpy = spy(mHandler);
+        doNothing().when(handlerSpy).showDeleteDialog();
+
+        // Test with a document that supports trash
+        final DocumentInfo trashableDoc =
+                mEnv.model.createDocument(
+                        "trashable-doc",
+                        "plain/text",
+                        DocumentsContract.Document.FLAG_SUPPORTS_TRASH);
+        mEnv.model.update();
+        mEnv.selectDocument(trashableDoc);
+
+        handlerSpy.runDeleteOrTrashHandler();
+
+        verify(handlerSpy).showDeleteDialog();
+
+        // Test with a document that does not support trash
+        final DocumentInfo nonTrashableDoc =
+                mEnv.model.createDocument("non-trashable-doc", "plain/text", 0);
+        mEnv.model.update();
+        mEnv.selectDocument(nonTrashableDoc);
+
+        handlerSpy.runDeleteOrTrashHandler();
+
+        verify(handlerSpy, times(2)).showDeleteDialog();
     }
 
     @Test
@@ -517,20 +725,22 @@ public class ActionHandlerTest {
         mDialogs.assertNoAppFoundShown();
     }
 
-    // Require desktop file handling flag because when it's disabled proguard strips the
-    // openDocumentViewOnly function because it's not used anywhere reachable by production code.
     @Test
-    @EnableFlags({Flags.FLAG_DESKTOP_FILE_HANDLING_RO})
     public void testDocumentContextMenuOpen() throws Exception {
         mActivity.resources.setQuickViewerPackage("corptropolis.viewer");
         mActivity.currentRoot = TestProvidersAccess.HOME;
 
-        // Test normal picking (i.e. double click) behaviour will quick view
-        mHandler.openDocument(TestEnv.FILE_GIF, ActionHandler.VIEW_TYPE_PREVIEW,
-                ActionHandler.VIEW_TYPE_REGULAR);
+        // Test normal picking on mobile will quick view
+        mHandler.openDocument(
+                TestEnv.FILE_GIF, ActionHandler.VIEW_TYPE_PREVIEW, ActionHandler.VIEW_TYPE_REGULAR);
         mActivity.assertActivityStarted(Intent.ACTION_QUICK_VIEW);
 
-        // And verify open via context menu will view instead
+        // Test normal picking on desktop will view
+        mHandler.openDocument(
+                TestEnv.FILE_GIF, ActionHandler.VIEW_TYPE_REGULAR, ActionHandler.VIEW_TYPE_NONE);
+        mActivity.assertActivityStarted(Intent.ACTION_VIEW);
+
+        // And verify open via context menu will view
         mHandler.openDocumentViewOnly(TestEnv.FILE_GIF);
         mActivity.assertActivityStarted(Intent.ACTION_VIEW);
     }
@@ -616,14 +826,18 @@ public class ActionHandlerTest {
 
     @Test
     public void testInitLocation_BrowseRootWrongAuthority_ShowDefault() throws Exception {
+        ActionHandler<TestActivity> spyHandler = spy(mHandler);
         Intent intent = mActivity.getIntent();
         intent.setAction(Intent.ACTION_VIEW);
         intent.setData(DocumentsContract.buildRootsUri("com.test.wrongauthority"));
         mActivity.resources.strings.put(R.string.default_root_uri,
                 TestProvidersAccess.HOME.getUri().toString());
 
-        mHandler.initLocation(intent);
+        spyHandler.initLocation(intent);
         assertRootPicked(TestProvidersAccess.HOME.getUri());
+        // Assert that the root is picked correctly by specifically calling
+        // launchToDefaultLocation().
+        verify(spyHandler, times(1)).launchToDefaultLocation();
     }
 
     @Test
@@ -665,12 +879,89 @@ public class ActionHandlerTest {
     }
 
     @Test
+    @DisableFlags({Flags.FLAG_HOME_SCREEN_FILES_RO})
     public void testInitLocation_LaunchToDownloads() throws Exception {
         Intent intent = mActivity.getIntent();
         intent.setAction(DownloadManager.ACTION_VIEW_DOWNLOADS);
 
         mHandler.initLocation(intent);
         assertRootPicked(TestProvidersAccess.DOWNLOADS.getUri());
+    }
+
+    @Test
+    @EnableFlags({Flags.FLAG_USE_MATERIAL3, Flags.FLAG_HOME_SCREEN_FILES_RO})
+    public void testInitLocation_LaunchToFolderOnHomeScreen() throws Exception {
+        Uri mediaStoreUri = Uri.parse("content://media/external/file/1");
+
+        // Set the intent data to be the media store uri.
+        Intent intent = mActivity.getIntent();
+        intent.setAction(Intent.ACTION_VIEW);
+        intent.setData(mediaStoreUri);
+
+        // Set the path to be:
+        // external storage provider root --> home screen folder --> folder 0.
+        mEnv.docs.nextPath =
+                new Path(
+                        TestProvidersAccess.HOME_SCREEN_SHORTCUT.getRoot().rootId,
+                        Arrays.asList(
+                                TestProvidersAccess.HOME_SCREEN_SHORTCUT.getDocumentId(),
+                                TestEnv.FOLDER_0.documentId));
+        // Needed to get the correct results when calling LoadDocStackTask.
+        mEnv.docs.nextIsDocumentsUri = true;
+        DocumentInfo homeScreenDoc = new DocumentInfo();
+        homeScreenDoc.derivedUri = TestProvidersAccess.HOME_SCREEN_SHORTCUT.getUri();
+        mEnv.docs.nextDocuments = Arrays.asList(homeScreenDoc, TestEnv.FOLDER_0);
+        // Mock the media store uri to convert to FOLDER_0's uri.
+        mEnv.docs.mNextDocumentUri = TestEnv.FOLDER_0.derivedUri;
+
+        mHandler.initLocation(intent);
+        mEnv.beforeAsserts();
+
+        DocumentStackAsserts.assertEqualsTo(
+                mEnv.state.stack,
+                TestProvidersAccess.HOME_SCREEN_SHORTCUT.getRoot(),
+                Arrays.asList(homeScreenDoc, TestEnv.FOLDER_0));
+        mActivity.refreshCurrentRootAndDirectory.assertCalled();
+    }
+
+    @Test
+    @EnableFlags({Flags.FLAG_USE_MATERIAL3, Flags.FLAG_HOME_SCREEN_FILES_RO})
+    public void testInitLocation_LaunchToZipFolderOnHomeScreen() throws Exception {
+        Uri mediaStoreUri = Uri.parse("content://media/external/file/1");
+
+        // Set the intent data to be the media store uri.
+        Intent intent = mActivity.getIntent();
+        intent.setAction(Intent.ACTION_VIEW);
+        intent.setDataAndType(mediaStoreUri, "application/zip");
+
+        // Set the path to be:
+        // external storage provider root --> home screen folder --> whatsinthere.zip.
+        mEnv.docs.nextPath =
+                new Path(
+                        TestProvidersAccess.HOME_SCREEN_SHORTCUT.getRoot().rootId,
+                        Arrays.asList(
+                                TestProvidersAccess.HOME_SCREEN_SHORTCUT.getDocumentId(),
+                                TestEnv.FILE_ARCHIVE.documentId));
+        // Needed to get the correct results when calling LoadDocStackTask.
+        mEnv.docs.nextIsDocumentsUri = true;
+        DocumentInfo homeScreenDoc = new DocumentInfo();
+        homeScreenDoc.derivedUri = TestProvidersAccess.HOME_SCREEN_SHORTCUT.getUri();
+        mEnv.docs.nextDocuments = Arrays.asList(homeScreenDoc, TestEnv.FILE_ARCHIVE);
+        // Mock the media store uri to convert to FILE_ARCHIVE's uri.
+        mEnv.docs.mNextDocumentUri = TestEnv.FILE_ARCHIVE.derivedUri;
+
+        mHandler.initLocation(intent);
+        mEnv.beforeAsserts();
+
+        // The expected behaviour is that the activity will launch to the home screen document and
+        // select the zip file in the directory list.
+        DocumentStackAsserts.assertEqualsTo(
+                mEnv.state.stack,
+                TestProvidersAccess.HOME_SCREEN_SHORTCUT.getRoot(),
+                Arrays.asList(homeScreenDoc));
+        assertEquals(TestEnv.FILE_ARCHIVE.derivedUri, mHandler.getToSelect());
+
+        mActivity.refreshCurrentRootAndDirectory.assertCalled();
     }
 
     // Ignoring the test because it uses hidden api DragEvent#obtain() and changes to the api is
@@ -684,6 +975,7 @@ public class ActionHandlerTest {
         DragEvent event = DragEvent.obtain(DragEvent.ACTION_DROP, 1, 1, 0, 0, 0, 0, null, null,
                 null, null, null, true);
         assertFalse(mHandler.dropOn(event, root));
+        verifyNoMoreInteractions(mMockRequestPermissionsHandler);
     }
 
     // Ignoring the test because it uses hidden api DragEvent#obtain() and changes to the api is
@@ -696,6 +988,7 @@ public class ActionHandlerTest {
         DragEvent event = DragEvent.obtain(DragEvent.ACTION_DROP, 1, 1, 0, 0, 0, 0, null, null,
                 null, null, null, true);
         assertFalse(mHandler.dropOn(event, TestProvidersAccess.RECENTS));
+        verifyNoMoreInteractions(mMockRequestPermissionsHandler);
     }
 
     // Ignoring the test because it uses hidden api DragEvent#obtain() and changes to the api is
@@ -713,12 +1006,19 @@ public class ActionHandlerTest {
         DragEvent event = DragEvent.obtain(DragEvent.ACTION_DROP, 1, 1, 0, 0, 0, 0, localState,
                 null, clipData, null, null, true);
 
+        final Permissions permissions = mock(Permissions.class);
+        doReturn(permissions).when(mMockRequestPermissionsHandler).apply(mActivity, event);
+
         mHandler.dropOn(event, TestProvidersAccess.DOWNLOADS);
         event.recycle();
 
-        Pair<ClipData, RootInfo> actual = mDragAndDropManager.dropOnRootHandler.getLastValue();
-        assertSame(clipData, actual.first);
-        assertSame(TestProvidersAccess.DOWNLOADS, actual.second);
+        final Triple<Permissions, ClipData, SidebarEntryItemInfo> actual =
+                mDragAndDropManager.dropOnRootHandler.getLastValue();
+
+        assertNotNull(actual);
+        assertSame(permissions, actual.getFirst());
+        assertSame(clipData, actual.getSecond());
+        assertSame(TestProvidersAccess.DOWNLOADS, actual.getThird());
     }
 
     @Test
@@ -792,102 +1092,6 @@ public class ActionHandlerTest {
     }
 
     @Test
-    @EnableFlags({Flags.FLAG_USE_MATERIAL3})
-    // TODO(b/433858983): Change to DisableFlags once peek is overridable in FlagUtils.
-    @RequiresFlagsEnabled({Flags.FLAG_USE_PEEK_PREVIEW_RO})
-    public void testShowPeek() throws Exception {
-        mHandler.showPreview(TestEnv.FILE_GIF);
-        // The inspector activity is not called.
-        mActivity.startActivity.assertNotCalled();
-        mPeekViewManager.getPeekDocument().assertCalled();
-        mPeekViewManager.getPeekDocument().assertLastArgument(TestEnv.FILE_GIF);
-    }
-
-    @Test
-    // TODO(b/433858983): Change to DisableFlags once peek is overridable in FlagUtils.
-    @RequiresFlagsDisabled({Flags.FLAG_USE_PEEK_PREVIEW_RO})
-    public void testShowInspector() throws Exception {
-        mHandler.showPreview(TestEnv.FILE_GIF);
-
-        mActivity.startActivity.assertCalled();
-        Intent intent = mActivity.startActivity.getLastValue();
-        assertTargetsComponent(intent, InspectorActivity.class);
-        assertHasData(intent, TestEnv.FILE_GIF.derivedUri);
-
-        // should only send this under especial circumstances. See test below.
-        assertFalse(intent.getExtras().containsKey(Intent.EXTRA_TITLE));
-    }
-
-    @Test
-    // TODO(b/433858983): Change to DisableFlags once peek is overridable in FlagUtils.
-    @RequiresFlagsDisabled({Flags.FLAG_USE_PEEK_PREVIEW_RO})
-    public void testShowInspector_DebugDisabled() throws Exception {
-        mFeatures.debugSupport = false;
-
-        mHandler.showPreview(TestEnv.FILE_GIF);
-        Intent intent = mActivity.startActivity.getLastValue();
-
-        assertHasExtra(intent, Shared.EXTRA_SHOW_DEBUG);
-        assertFalse(intent.getExtras().getBoolean(Shared.EXTRA_SHOW_DEBUG));
-    }
-
-    @Test
-    // TODO(b/433858983): Change to DisableFlags once peek is overridable in FlagUtils.
-    @RequiresFlagsDisabled({Flags.FLAG_USE_PEEK_PREVIEW_RO})
-    public void testShowInspector_DebugEnabled() throws Exception {
-        mFeatures.debugSupport = true;
-        DebugFlags.setDocumentDetailsEnabled(true);
-
-        mHandler.showPreview(TestEnv.FILE_GIF);
-        Intent intent = mActivity.startActivity.getLastValue();
-
-        assertHasExtra(intent, Shared.EXTRA_SHOW_DEBUG);
-        assertTrue(intent.getExtras().getBoolean(Shared.EXTRA_SHOW_DEBUG));
-        DebugFlags.setDocumentDetailsEnabled(false);
-    }
-
-    @Test
-    // TODO(b/433858983): Change to DisableFlags once peek is overridable in FlagUtils.
-    @RequiresFlagsDisabled({Flags.FLAG_USE_PEEK_PREVIEW_RO})
-    public void testShowInspector_OverridesRootDocumentName() throws Exception {
-        mActivity.currentRoot = TestProvidersAccess.PICKLES;
-        mEnv.populateStack();
-
-        // Verify test setup is correct, but not an assert related to the logic of our test.
-        Preconditions.checkState(mEnv.state.stack.size() == 1);
-        Preconditions.checkNotNull(mEnv.state.stack.peek());
-
-        DocumentInfo rootDoc = mEnv.state.stack.peek();
-        rootDoc.displayName = "poodles";
-
-        mHandler.showPreview(rootDoc);
-        Intent intent = mActivity.startActivity.getLastValue();
-        assertEquals(
-                TestProvidersAccess.PICKLES.title,
-                intent.getExtras().getString(Intent.EXTRA_TITLE));
-    }
-
-    @Test
-    // TODO(b/433858983): Change to DisableFlags once peek is overridable in FlagUtils.
-    @RequiresFlagsDisabled({Flags.FLAG_USE_PEEK_PREVIEW_RO})
-    public void testShowInspector_OverridesRootDocumentNameX() throws Exception {
-        mActivity.currentRoot = TestProvidersAccess.PICKLES;
-        mEnv.populateStack();
-        mEnv.state.stack.push(TestEnv.FOLDER_2);
-
-        // Verify test setup is correct, but not an assert related to the logic of our test.
-        Preconditions.checkState(mEnv.state.stack.size() == 2);
-        Preconditions.checkNotNull(mEnv.state.stack.peek());
-
-        DocumentInfo rootDoc = mEnv.state.stack.peek();
-        rootDoc.displayName = "poodles";
-
-        mHandler.showPreview(rootDoc);
-        Intent intent = mActivity.startActivity.getLastValue();
-        assertFalse(intent.getExtras().containsKey(Intent.EXTRA_TITLE));
-    }
-
-    @Test
     public void testViewInOwner() {
         mEnv.populateStack();
 
@@ -902,6 +1106,174 @@ public class ActionHandlerTest {
     public void testOpenSettings() {
         mHandler.openSettings(TestProvidersAccess.HAMMY);
         mActivity.assertActivityStarted(DocumentsContract.ACTION_DOCUMENT_ROOT_SETTINGS);
+    }
+
+    /**
+     * Verifies that the "Empty Trash" confirmation dialog does not appear if the trash is empty.
+     * When the method is called on an empty trash, no service should be started, and the UI state
+     * should remain unchanged.
+     */
+    @Test
+    @RequiresFlagsEnabled({FLAG_ENABLE_DOCUMENTS_TRASH_API})
+    @EnableFlags({Flags.FLAG_ENABLE_TRASH_FLOW_RO, Flags.FLAG_USE_MATERIAL3})
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    public void testShowEmptyTrashConfirmationDialog_NoDialog() {
+        // Clear the environment to ensure trash is empty
+        mEnv.clear();
+        mEnv.state.stack.changeRoot(TestProvidersAccess.TRASH_ROOT);
+
+        mHandler.showEmptyTrashConfirmationDialog();
+
+        // Assert that no actions were taken
+        mActivity.startService.assertNotCalled();
+        assertFalse(mActionModeAddons.finishActionModeCalled);
+    }
+
+    /**
+     * Verifies that items currently in the trash are permanently deleted. This test first moves a
+     * file to the trash and then calls the permanent delete method, asserting that the correct
+     * deletion service is triggered.
+     */
+    @Test
+    @RequiresFlagsEnabled({FLAG_ENABLE_DOCUMENTS_TRASH_API})
+    @EnableFlags({Flags.FLAG_ENABLE_TRASH_FLOW_RO, Flags.FLAG_USE_MATERIAL3})
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    public void testPermanentlyDeleteTrashDocuments() {
+        // Add a file and move it to the trash
+        mEnv.populateStack();
+        mEnv.selectionMgr.clearSelection();
+        mEnv.selectDocument(TestEnv.FILE_PNG);
+        mHandler.trashSelectedDocuments();
+        mActivity.startService.assertCalled();
+        assertSelectionContainerClosed();
+        mEnv.state.stack.changeRoot(TestProvidersAccess.TRASH_ROOT);
+
+        // reset
+        mActivity.startService.reset();
+
+        // Call the method to permanently delete items.
+        mHandler.permanentlyDeleteTrashDocuments();
+
+        // Assert that the deletion service was started.
+        mActivity.startService.assertCalled();
+        // Total number of invocations is 2 now.
+        assertSelectionContainerClosed(/* wantedNumberOfInvocations */ 2);
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @EnableFlags({Flags.FLAG_USE_MATERIAL3, Flags.FLAG_USE_APPROVED_DOCUMENT_HANDLER})
+    public void testCreateApprovedHandlerIntent_singleFile() {
+        mEnv.selectionMgr.clearSelection();
+        mEnv.selectDocument(TestEnv.FILE_PNG);
+        Intent intent = mHandler.createApprovedHandlerIntent(mEnv.selectionMgr.getSelection());
+
+        assertNotNull(intent);
+        assertEquals(Intent.ACTION_SEND, intent.getAction());
+        assertEquals(TestEnv.FILE_PNG.getDocumentUri(),
+                intent.getParcelableExtra(Intent.EXTRA_STREAM));
+        assertTrue(intent.hasCategory(DocumentsContract.CATEGORY_APPROVED_DOCUMENT_HANDLER));
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @EnableFlags({Flags.FLAG_USE_MATERIAL3, Flags.FLAG_USE_APPROVED_DOCUMENT_HANDLER})
+    public void testCreateApprovedHandlerIntent_multipleFiles() {
+        mEnv.selectionMgr.clearSelection();
+        mEnv.selectDocument(TestEnv.FILE_PNG);
+        mEnv.selectDocument(TestEnv.FILE_PDF);
+        Intent intent = mHandler.createApprovedHandlerIntent(mEnv.selectionMgr.getSelection());
+
+        assertNotNull(intent);
+        assertEquals(Intent.ACTION_SEND_MULTIPLE, intent.getAction());
+        ArrayList<Uri> uris = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+        assertEquals(2, uris.size());
+        assertTrue(uris.contains(TestEnv.FILE_PNG.getDocumentUri()));
+        assertTrue(uris.contains(TestEnv.FILE_PDF.getDocumentUri()));
+        assertTrue(intent.hasCategory(DocumentsContract.CATEGORY_APPROVED_DOCUMENT_HANDLER));
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @EnableFlags({Flags.FLAG_USE_MATERIAL3, Flags.FLAG_USE_APPROVED_DOCUMENT_HANDLER})
+    public void testCreateApprovedHandlerIntent_noSharableFiles() {
+        mEnv.selectionMgr.clearSelection();
+        mEnv.selectDocument(TestEnv.FILE_PARTIAL);
+        Intent intent = mHandler.createApprovedHandlerIntent(mEnv.selectionMgr.getSelection());
+        assertNull(intent);
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @EnableFlags({Flags.FLAG_USE_MATERIAL3, Flags.FLAG_USE_APPROVED_DOCUMENT_HANDLER})
+    public void testCreateApprovedHandlerIntent_virtualFile() {
+        mFeatures.virtualFilesSharing = true;
+        mEnv.selectionMgr.clearSelection();
+        mEnv.selectDocument(TestEnv.FILE_VIRTUAL);
+        Intent intent = mHandler.createApprovedHandlerIntent(mEnv.selectionMgr.getSelection());
+
+        assertNotNull(intent);
+        assertEquals(Intent.ACTION_SEND, intent.getAction());
+        assertEquals(TestEnv.FILE_VIRTUAL.getDocumentUri(),
+                intent.getParcelableExtra(Intent.EXTRA_STREAM));
+        assertTrue(intent.hasCategory(Intent.CATEGORY_TYPED_OPENABLE));
+        assertTrue(intent.hasCategory(DocumentsContract.CATEGORY_APPROVED_DOCUMENT_HANDLER));
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @EnableFlags({Flags.FLAG_USE_MATERIAL3, Flags.FLAG_USE_APPROVED_DOCUMENT_HANDLER})
+    public void testCreateApprovedHandlerIntent_success() {
+        mFeatures.virtualFilesSharing = true;
+        mEnv.selectionMgr.clearSelection();
+        mEnv.selectDocument(TestEnv.FILE_VIRTUAL);
+        ComponentName testComponent = new ComponentName("com.test", "com.test.Activity");
+        Intent intent = mHandler.createApprovedHandlerIntent(testComponent);
+
+        assertNotNull(intent);
+        assertEquals(Intent.ACTION_SEND, intent.getAction());
+        assertEquals(testComponent, intent.getComponent());
+        assertTrue(intent.hasCategory(DocumentsContract.CATEGORY_APPROVED_DOCUMENT_HANDLER));
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @EnableFlags({Flags.FLAG_USE_MATERIAL3, Flags.FLAG_USE_APPROVED_DOCUMENT_HANDLER})
+    public void testCreateApprovedHandlerIntent_failure() {
+        mEnv.selectionMgr.clearSelection();
+        mEnv.selectDocument(TestEnv.FILE_PARTIAL);
+        ComponentName testComponent = new ComponentName("com.test", "com.test.Activity");
+
+        Intent intent = mHandler.createApprovedHandlerIntent(testComponent);
+
+        assertNull(intent);
+        mActivity.startActivity.assertNotCalled();
+    }
+
+    /** Verifies that the permanent delete action does nothing if the trash is already empty. */
+    @Test
+    @RequiresFlagsEnabled({FLAG_ENABLE_DOCUMENTS_TRASH_API})
+    @EnableFlags({Flags.FLAG_ENABLE_TRASH_FLOW_RO, Flags.FLAG_USE_MATERIAL3})
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    public void testPermanentlyDeleteTrashDocuments_NoItems() {
+        // Ensure the environment and trash are empty
+        mEnv.clear();
+
+        mEnv.state.stack.changeRoot(TestProvidersAccess.TRASH_ROOT);
+
+        mHandler.permanentlyDeleteTrashDocuments();
+
+        // Assert that no deletion service was started
+        mActivity.startService.assertNotCalled();
+    }
+
+    @Test
+    @EnableFlags({Flags.FLAG_HOME_SCREEN_FILES_RO, Flags.FLAG_USE_MATERIAL3})
+    public void testRenameOnShortcut() {
+        DocumentInfo docInfo = new DocumentInfo();
+        docInfo.derivedUri = TestProvidersAccess.TEST_SHORTCUT.getUri();
+        docInfo.userId = TestProvidersAccess.USER_ID;
+        assertNull(mHandler.renameDocument("new name", docInfo));
     }
 
     private void assertRootPicked(Uri expectedUri) throws Exception {

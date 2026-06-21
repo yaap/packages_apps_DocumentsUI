@@ -16,11 +16,14 @@
 
 package com.android.documentsui.picker;
 
+import static android.view.KeyEvent.META_CTRL_ON;
+
 import static com.android.documentsui.base.State.ACTION_CREATE;
 import static com.android.documentsui.base.State.ACTION_GET_CONTENT;
 import static com.android.documentsui.base.State.ACTION_OPEN;
 import static com.android.documentsui.base.State.ACTION_OPEN_TREE;
 import static com.android.documentsui.base.State.ACTION_PICK_COPY_DESTINATION;
+import static com.android.documentsui.util.FlagUtils.isDesktopUxPhase2FlagEnabled;
 import static com.android.documentsui.util.FlagUtils.isMovingContentIntoPrivateSpaceEnabled;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
@@ -43,9 +46,14 @@ import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.ViewGroup.MarginLayoutParams;
 
 import androidx.annotation.CallSuper;
 import androidx.annotation.RequiresApi;
+import androidx.annotation.VisibleForTesting;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 
@@ -93,11 +101,11 @@ public class PickActivity extends BaseActivity implements ActionHandler.Addons {
 
     private static final String TAG = "PickActivity";
 
-    private Injector<ActionHandler<PickActivity>> mInjector;
+    @VisibleForTesting protected Injector<ActionHandler<PickActivity>> mInjector;
     private SharedInputHandler mSharedInputHandler;
 
     public PickActivity() {
-        super(getRes(R.layout.documents_activity), TAG);
+        super(getRes(R.layout.pick_activity), TAG);
     }
 
     // make these methods visible in this package to work around compiler bug http://b/62218600
@@ -112,8 +120,63 @@ public class PickActivity extends BaseActivity implements ActionHandler.Addons {
     }
 
     @Override
+    protected int getBottomPadding() {
+        if (isUseMaterial3FlagEnabled()) {
+            return getResources().getDimensionPixelSize(R.dimen.picker_saver_padding_bottom);
+        }
+        return 0;
+    }
+
+    @Override
+    protected void setContainer() {
+        if (isDesktopUxPhase2FlagEnabled()) {
+            // Set the bottom padding for the picker saver container (i.e. which is located at the
+            // bottom of the right section) because we don't want bottom padding on the navigation
+            // tree area.
+            View pickerSaverContainer = findViewById(getRes(R.id.container_save));
+            pickerSaverContainer.setPadding(0, 0, 0, getBottomPadding());
+
+            // PickActivity is not rendered as a full window activity, instead the UI was wrapped
+            // in a dialog with margins (check onCreate()), so no need to cater root container
+            // padding like what we have in BaseActivity. Instead we need to handle the overlap on
+            // the margin because that's the area which might be overlapped with navigation bar.
+            View root = findViewById(getRes(R.id.coordinator_layout));
+            final int horizontalMargin =
+                    getResources()
+                            .getDimensionPixelSize(R.dimen.pick_dialog_window_margin_horizontal);
+            final int verticalMargin =
+                    getResources()
+                            .getDimensionPixelSize(R.dimen.pick_dialog_window_margin_vertical);
+            ViewCompat.setOnApplyWindowInsetsListener(
+                    root,
+                    (v, insets) -> {
+                        // System bars includes both status bar (top) and navigation bar (bottom)
+                        // and also others, the insets will only have non-zero values when the app
+                        // might be overlapped with these areas (i.e. in fullscreen mode),
+                        // otherwise (i.e. in window mode) they will all be 0.
+                        Insets systemBarInsets =
+                                insets.getInsets(WindowInsetsCompat.Type.systemBars());
+                        MarginLayoutParams mlp = (MarginLayoutParams) v.getLayoutParams();
+                        mlp.leftMargin = horizontalMargin + systemBarInsets.left;
+                        mlp.rightMargin = horizontalMargin + systemBarInsets.right;
+                        mlp.topMargin = verticalMargin + systemBarInsets.top;
+                        mlp.bottomMargin = verticalMargin + systemBarInsets.bottom;
+                        v.setLayoutParams(mlp);
+
+                        return WindowInsetsCompat.CONSUMED;
+                    });
+        } else {
+            super.setContainer();
+        }
+    }
+
+    @Override
     public void onCreate(Bundle icicle) {
-        setTheme(getRes(R.style.DocumentsTheme));
+        // With desktop UX phase 2 enabled, PickActivity uses PickDialogTheme in the manifest which
+        // we don't want to override here.
+        if (!isDesktopUxPhase2FlagEnabled()) {
+            setTheme(getRes(R.style.DocumentsTheme));
+        }
         Features features = Features.create(this);
 
         mInjector = new Injector<>(
@@ -130,8 +193,26 @@ public class PickActivity extends BaseActivity implements ActionHandler.Addons {
                         return DocumentsApplication.getUserManagerState(context).getUserIds();
                     }
                 });
-
+        initInjector();
         super.onCreate(icicle);
+
+        // The customizations here plus the PickDialogTheme style PickActivity styled as a dialog.
+        // * Margins: by default the root view (coordinator_layout) will occupy the whole activity
+        //            window, adding additional margins here between the root view and the window
+        //            so we can show the overlay and a visual border around the root view (handled
+        //            by setContainer() above).
+        // * Dialog corner radius: this is achieved by the custom background, ClipToOutline
+        //                         makes sure the content inside the root view will be clipped
+        //                         to the corner radius.
+        // * Semi-transparent overlay: this is handled by the window side, check PickDialogTheme.
+        // * Dialog shadow: this is achieved by the elevation.
+        if (isDesktopUxPhase2FlagEnabled()) {
+            View coordinatorLayout = findViewById(getRes(R.id.coordinator_layout));
+            int elevation = getResources().getInteger(R.integer.pick_dialog_window_elevation);
+            coordinatorLayout.setElevation(elevation);
+            coordinatorLayout.setBackgroundResource(R.drawable.pick_dialog_background);
+            coordinatorLayout.setClipToOutline(true);
+        }
 
         mInjector.selectionMgr = DocsSelectionHelper.create();
 
@@ -143,17 +224,23 @@ public class PickActivity extends BaseActivity implements ActionHandler.Addons {
                         this::focusSidebar,
                         getColor(getRes(R.color.primary)));
 
-        mInjector.menuManager = new MenuManager(
-                mSearchManager,
-                mState,
-                new DirectoryDetails(this),
-                mInjector.getModel()::getItemCount);
+        mInjector.menuManager =
+                new MenuManager(
+                        mSearchManager,
+                        mState,
+                        new DirectoryDetails(this),
+                        mInjector.getModel()::getItemCount,
+                        getApplicationContext(),
+                        features,
+                        mInjector,
+                        null);
 
         if (isUseMaterial3FlagEnabled()) {
             mInjector.selectionBarController =
                     new SelectionBarController(
                             findViewById(getRes(R.id.toolbar)),
                             findViewById(getRes(R.id.selection_bar)),
+                            mInjector.focusManager,
                             mInjector.menuManager,
                             mInjector.selectionMgr);
         } else {
@@ -171,15 +258,26 @@ public class PickActivity extends BaseActivity implements ActionHandler.Addons {
                 getProfileTabsAddon());
 
         mInjector.pickResult = getPickResult(icicle);
-        mInjector.actions = new ActionHandler<>(
-                this,
-                mState,
-                mProviders,
-                mDocs,
-                mSearchManager,
-                ProviderExecutor::forAuthority,
-                mInjector,
-                LastAccessedStorage.create());
+
+        Runnable closeSelectionBarRunnable =
+                (isUseMaterial3FlagEnabled()
+                        ? mInjector.selectionBarController::closeSelectionBar
+                        : () -> {});
+
+        mInjector.actions =
+                new ActionHandler<>(
+                        this,
+                        mState,
+                        mProviders,
+                        mDocs,
+                        mSearchManager,
+                        ProviderExecutor::forAuthority,
+                        mInjector,
+                        LastAccessedStorage.create(),
+                        mPeekViewManager,
+                        mInjector.actionModeController,
+                        closeSelectionBarRunnable,
+                        DocumentsApplication.getClipStore(this));
 
         mInjector.searchManager = mSearchManager;
 
@@ -190,13 +288,14 @@ public class PickActivity extends BaseActivity implements ActionHandler.Addons {
 
         mSharedInputHandler =
                 new SharedInputHandler(
+                        this,
                         mInjector.focusManager,
                         mInjector.selectionMgr,
                         mInjector.searchManager::cancelSearch,
                         this::popDir,
                         mInjector.features,
                         mDrawer,
-                        mInjector.searchManager::onSearchBarClicked);
+                        this::onSearchKeyboardShortcut);
         setupLayout(intent);
         mInjector.actions.initLocation(intent);
         Metrics.logPickerLaunchedFrom(Shared.getCallingPackageName(this));
@@ -515,6 +614,14 @@ public class PickActivity extends BaseActivity implements ActionHandler.Addons {
         }
     }
 
+    @Override
+    protected boolean canInspectDirectory() {
+        if (isUseMaterial3FlagEnabled()) {
+            return super.canInspectDirectory();
+        }
+        return false;
+    }
+
     private boolean canShare(List<DocumentInfo> docs) {
         for (DocumentInfo doc : docs) {
             if (!mState.canInteractWith(doc.userId)) {
@@ -529,6 +636,18 @@ public class PickActivity extends BaseActivity implements ActionHandler.Addons {
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         return mSharedInputHandler.onKeyDown(keyCode, event)
                 || super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyShortcut(int keyCode, KeyEvent event) {
+        if (isUseMaterial3FlagEnabled()
+                && event.hasModifiers(META_CTRL_ON)
+                && keyCode == KeyEvent.KEYCODE_SPACE) {
+            mInjector.actions.toggleFocusedItemSelection();
+            return true;
+        }
+
+        return super.onKeyShortcut(keyCode, event);
     }
 
     @Override

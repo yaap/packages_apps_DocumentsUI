@@ -39,9 +39,16 @@ public class TestDocumentClipper implements DocumentClipper {
     public ClipData primaryClip;
 
     public final TestEventHandler<List<Uri>> clipForCut = new TestEventHandler<>();
+    public final TestEventHandler<List<Uri>> clipForCopy = new TestEventHandler<>();
 
     public final TestEventListener<Pair<DocumentStack, ClipData>> copyFromClip =
             new TestEventListener<>();
+    public final TestEventListener<Pair<DocumentStack, ClipData>> trashFromClip =
+            new TestEventListener<>();
+
+    public final TestEventListener<Pair<DocumentStack, ClipData>> restoreFromClipData =
+            new TestEventListener<>();
+
     public final TestEventListener<Integer> opType = new TestEventListener<>();
 
     @Override
@@ -69,11 +76,20 @@ public class TestDocumentClipper implements DocumentClipper {
 
     @Override
     public void clipDocumentsForCopy(Function<String, Uri> uriBuilder, Selection<String> selection) {
+        List<Uri> uris = new ArrayList<>(selection.size());
+        for (String id : selection) {
+            uris.add(uriBuilder.apply(id));
+        }
+
+        clipForCopy.accept(uris);
     }
 
     @Override
-    public void clipDocumentsForCut(Function<String, Uri> uriBuilder, Selection<String> selection,
-            DocumentInfo parent) {
+    public void clipDocumentsForCut(
+            Function<String, Uri> uriBuilder,
+            Selection<String> selection,
+            DocumentInfo parent,
+            boolean isFromRecents) {
         List<Uri> uris = new ArrayList<>(selection.size());
         for (String id : selection) {
             uris.add(uriBuilder.apply(id));
@@ -109,5 +125,18 @@ public class TestDocumentClipper implements DocumentClipper {
     @Override
     public void copyFromClipData(DocumentStack docStack, ClipData clipData, Callback callback) {
         copyFromClip.accept(Pair.create(docStack, clipData));
+    }
+
+    @Override
+    public void trashFromClipData(DocumentStack dstStack, ClipData clipData, Callback callback) {
+        this.trashFromClip.accept(Pair.create(dstStack, clipData));
+        this.opType.accept(FileOperationService.OPERATION_TRASH);
+    }
+
+    @Override
+    public void restoreFromTrashClipData(DocumentStack dstStack, ClipData clipData,
+            Callback callback) {
+        this.restoreFromClipData.accept(Pair.create(dstStack, clipData));
+        this.opType.accept(FileOperationService.OPERATION_RESTORE);
     }
 }

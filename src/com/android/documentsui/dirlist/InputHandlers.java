@@ -21,9 +21,12 @@ import static com.android.documentsui.ActionHandler.VIEW_TYPE_NONE;
 import static com.android.documentsui.ActionHandler.VIEW_TYPE_PREVIEW;
 import static com.android.documentsui.ActionHandler.VIEW_TYPE_REGULAR;
 import static com.android.documentsui.util.FlagUtils.isDesktopFileHandlingFlagEnabled;
+import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
+import static com.android.documentsui.util.FlagUtils.isUseNewOpenWithEnabled;
 
 import android.view.KeyEvent;
 
+import androidx.recyclerview.selection.ItemDetailsLookup.ItemDetails;
 import androidx.recyclerview.selection.SelectionTracker;
 import androidx.recyclerview.selection.SelectionTracker.SelectionPredicate;
 import androidx.recyclerview.widget.RecyclerView;
@@ -66,53 +69,49 @@ final class InputHandlers {
     }
 
     KeyInputHandler createKeyHandler() {
-        KeyInputHandler.Callbacks<DocumentItemDetails> callbacks =
-                new KeyInputHandler.Callbacks<DocumentItemDetails>() {
-            @Override
-            public boolean isInteractiveItem(DocumentItemDetails item, KeyEvent e) {
-                switch (item.getItemViewType()) {
-                    case DocumentsAdapter.ITEM_TYPE_HEADER_MESSAGE:
-                    case DocumentsAdapter.ITEM_TYPE_INFLATED_MESSAGE:
-                    case DocumentsAdapter.ITEM_TYPE_SECTION_BREAK:
-                        return false;
-                    case DocumentsAdapter.ITEM_TYPE_DOCUMENT:
-                    case DocumentsAdapter.ITEM_TYPE_DIRECTORY:
-                        return true;
-                    default:
-                        throw new RuntimeException(
-                                "Unsupported item type: " + item.getItemViewType());
-                }
-            }
-
-            @Override
-            public boolean onItemActivated(DocumentItemDetails item, KeyEvent e) {
-                // Handle enter key events
-                switch (e.getKeyCode()) {
-                    case KeyEvent.KEYCODE_ENTER:
-                    case KeyEvent.KEYCODE_DPAD_CENTER:
-                    case KeyEvent.KEYCODE_BUTTON_A:
-                        if (isDesktopFileHandlingFlagEnabled()) {
-                            return mActions.openItem(item, VIEW_TYPE_REGULAR, VIEW_TYPE_NONE);
+        KeyInputHandler.Callbacks<ItemDetails<String>> callbacks =
+                new KeyInputHandler.Callbacks<ItemDetails<String>>() {
+                    @Override
+                    public boolean onItemActivated(ItemDetails<String> item, KeyEvent e) {
+                        if (isUseMaterial3FlagEnabled() && !e.hasNoModifiers()) {
+                            return false;
                         }
-                        return mActions.openItem(item, VIEW_TYPE_PREVIEW, VIEW_TYPE_REGULAR);
-                    case KeyEvent.KEYCODE_SPACE:
-                        return mActions.openItem(item, VIEW_TYPE_PREVIEW, VIEW_TYPE_NONE);
-                }
 
-                return false;
-            }
+                        switch (e.getKeyCode()) {
+                            case KeyEvent.KEYCODE_ENTER:
+                            case KeyEvent.KEYCODE_DPAD_CENTER:
+                            case KeyEvent.KEYCODE_BUTTON_A:
+                                // This was reverted as desktop file handling was rolling out until
+                                // we have default file opening apps out-of-the box.
+                                // Since the default file opening app uses a build flag, we're using
+                                // another flag that's rolling out in the same cycle to flag protect
+                                // the revert^2.
+                                if (isDesktopFileHandlingFlagEnabled()
+                                        && isUseNewOpenWithEnabled()) {
+                                    return mActions.openItem(
+                                            item, VIEW_TYPE_REGULAR, VIEW_TYPE_NONE);
+                                }
+                                return mActions.openItem(
+                                        item, VIEW_TYPE_REGULAR, VIEW_TYPE_PREVIEW);
+                            case KeyEvent.KEYCODE_SPACE:
+                                return mActions.openItem(item, VIEW_TYPE_PREVIEW, VIEW_TYPE_NONE);
+                        }
 
-            @Override
-            public boolean onFocusItem(DocumentItemDetails details, int keyCode, KeyEvent event) {
-                ViewHolder holder =
-                        mRecView.findViewHolderForAdapterPosition(details.getPosition());
-                if (holder instanceof DocumentHolder) {
-                    return mFocusHandler.handleKey((DocumentHolder) holder, keyCode, event);
-                }
-                return false;
-            }
-        };
+                        return false;
+                    }
 
-        return new KeyInputHandler(mSelectionHelper, mSelectionPredicate, callbacks);
+                    @Override
+                    public boolean onFocusItem(
+                            ItemDetails<String> details, int keyCode, KeyEvent event) {
+                        ViewHolder holder =
+                                mRecView.findViewHolderForAdapterPosition(details.getPosition());
+                        if (holder instanceof DocumentHolder) {
+                            return mFocusHandler.handleKey((DocumentHolder) holder, keyCode, event);
+                        }
+                        return false;
+                    }
+                };
+
+        return new KeyInputHandler(mSelectionHelper, mSelectionPredicate, mFocusHandler, callbacks);
     }
 }

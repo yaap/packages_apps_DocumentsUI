@@ -16,13 +16,13 @@
 
 package com.android.documentsui.base;
 
-import static androidx.core.util.Preconditions.checkArgument;
-
 import static com.android.documentsui.base.SharedMinimal.DEBUG;
+import static com.android.documentsui.util.FlagUtils.isHomeScreenFilesFlagEnabled;
 import static com.android.documentsui.util.FlagUtils.isTrashFlowEnabled;
 
 import android.content.Context;
 import android.database.Cursor;
+import android.net.Uri;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.provider.DocumentsProvider;
@@ -40,6 +40,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Objects;
 
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 /**
@@ -126,40 +127,64 @@ public class DocumentStack implements Durable, Parcelable {
     }
 
     public void push(DocumentInfo info) {
-        checkArgument(!mList.contains(info));
-        if (DEBUG) {
-            Log.d(TAG, "Adding doc to stack: " + info);
-        }
         mList.addLast(info);
         mStackTouched = true;
+        if (DEBUG) {
+            Log.d(TAG, "Pushed " + quote(info) + " to the stack");
+            Log.d(TAG, "Stack = " + toShortString());
+        }
     }
 
     public DocumentInfo pop() {
-        if (DEBUG) {
-            Log.d(TAG, "Popping doc off stack.");
-        }
         final DocumentInfo result = mList.removeLast();
         mStackTouched = true;
-
+        if (DEBUG) {
+            Log.d(TAG, "Popped " + quote(result) + " from the stack");
+            Log.d(TAG, "Stack = " + toShortString());
+        }
         return result;
     }
 
     public void popToRootDocument() {
-        if (DEBUG) {
-            Log.d(TAG, "Popping docs to root folder.");
-        }
         while (mList.size() > 1) {
             mList.removeLast();
         }
         mStackTouched = true;
+        if (DEBUG) {
+            Log.d(TAG, "Popped all the folders from the stack except the root folder");
+            Log.d(TAG, "Stack = " + toShortString());
+        }
+    }
+
+    /**
+     * If this stack contains a folder with the given URI, then all the folders on top of the found
+     * one are popped, otherwise nothing is changed.
+     *
+     * @return whether a folder with the given URI was found in this stack.
+     */
+    public boolean popTo(@Nonnull Uri uri) {
+        int i = 0;
+        for (DocumentInfo doc : mList) {
+            i += 1;
+            if (uri.equals(doc.derivedUri)) {
+                if (DEBUG) Log.d(TAG, "Trim stack to position " + i);
+                while (mList.size() > i) {
+                    mList.removeLast();
+                    mStackTouched = true;
+                }
+                if (DEBUG) Log.d(TAG, "Stack = " + toShortString());
+                assert uri.equals(peek().derivedUri);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public void changeRoot(RootInfo root) {
-        if (DEBUG) {
-            Log.d(TAG, "Root changed to: " + root);
-        }
         reset();
         mRoot = root;
+        if (DEBUG) Log.d(TAG, "Changed root of the stack to " + quote(root));
 
         // Add this for keep stack size is 1 on recent root.
         if (root.isRecents()) {
@@ -167,6 +192,7 @@ public class DocumentStack implements Durable, Parcelable {
             rootRecent.userId = root.userId;
             rootRecent.deriveFields();
             push(rootRecent);
+            return;
         }
 
         if (root.isTrash()) {
@@ -174,7 +200,10 @@ public class DocumentStack implements Durable, Parcelable {
             trashRoot.userId = root.userId;
             trashRoot.deriveFields();
             push(trashRoot);
+            return;
         }
+
+        if (DEBUG) Log.d(TAG, "Stack = " + toShortString());
     }
 
     /** This will return true even when the initial location is set.
@@ -186,6 +215,16 @@ public class DocumentStack implements Durable, Parcelable {
 
     public String getTitle() {
         if (mList.size() == 1 && mRoot != null) {
+            if (isHomeScreenFilesFlagEnabled()
+                    && mRoot.documentId != null
+                    && mRoot.authority != null
+                    && !mRoot.getDocumentUri().equals(peek().derivedUri)) {
+                // If the document stack was created as a result of drag and drop to a shortcut or
+                // by clicking on a shortcut on the sidebar, then we want the title of the shortcut
+                // folder. In this case, the peek item on the list will be the shortcut folder and
+                // not the root folder.
+                return peek().displayName;
+            }
             return mRoot.title;
         } else if (mList.size() > 1) {
             return peek().displayName;
@@ -198,28 +237,37 @@ public class DocumentStack implements Durable, Parcelable {
         return mRoot != null && mRoot.isRecents() && size() == 1;
     }
 
+    /**
+     * @return whether the user is at the top-level of the trash directory.
+     */
+    public boolean isTrashTopLevel() {
+        return isTrashRoot() && size() == 1;
+    }
 
     /**
-     * @return whether the root is trash or not
+     * @return whether the current navigation stack belongs to the trash root. This will be true
+     *     even when navigating into sub-folders within the trash.
      */
-    public boolean isTrash() {
+    public boolean isTrashRoot() {
         if (!isTrashFlowEnabled()) {
             return false;
         }
-        return mRoot != null && mRoot.isTrash() && size() == 1;
-    }
 
+        return mRoot != null && mRoot.isTrash();
+    }
 
     /**
      * Resets this stack to the given stack. It takes the reference of {@link #mList} and
      * {@link #mRoot} instead of making a copy.
      */
     public void reset(DocumentStack stack) {
-        if (DEBUG) Log.d(TAG, "Reset the whole stack to: " + stack);
-
         mList = stack.mList;
         mRoot = stack.mRoot;
         mStackTouched = true;
+        if (DEBUG) {
+            Log.d(TAG, "Reset the whole stack");
+            Log.d(TAG, "Stack = " + toShortString());
+        }
     }
 
     @Override
@@ -229,6 +277,23 @@ public class DocumentStack implements Durable, Parcelable {
                 + ", docStack=" + mList
                 + ", stackTouched=" + mStackTouched
                 + "}";
+    }
+
+    /** Gets a short string representation of this object for logging and debugging purposes. */
+    public String toShortString() {
+        StringBuilder s = new StringBuilder();
+        s.append('{');
+        s.append(quote(mRoot));
+
+        String separator = ": ";
+        for (DocumentInfo doc : mList) {
+            s.append(separator);
+            s.append(quote(doc));
+            separator = " > ";
+        }
+
+        s.append('}');
+        return s.toString();
     }
 
     @Override
@@ -363,4 +428,15 @@ public class DocumentStack implements Durable, Parcelable {
             return new DocumentStack[size];
         }
     };
+
+    private static String quote(DocumentInfo doc) {
+        if (doc == null) return "(no folder)";
+        if (doc.displayName == null) return "(no name)";
+        return "'" + doc.displayName + "'";
+    }
+
+    private static String quote(RootInfo root) {
+        if (root == null) return "(no root)";
+        return "'" + root.getDirectoryString() + "'";
+    }
 }

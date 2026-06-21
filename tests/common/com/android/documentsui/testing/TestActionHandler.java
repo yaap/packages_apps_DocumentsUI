@@ -16,17 +16,31 @@
 
 package com.android.documentsui.testing;
 
-import android.content.Intent;
+import static com.android.documentsui.util.FlagUtils.isUseApprovedDocumentHandlerEnabled;
+import static com.android.documentsui.util.FlagUtils.isUsePeekPreviewFlagEnabled;
 
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+
+import android.content.ComponentName;
+import android.content.Intent;
+import android.net.Uri;
+import android.provider.DocumentsContract;
+
+import androidx.lifecycle.MutableLiveData;
 import androidx.recyclerview.selection.ItemDetailsLookup.ItemDetails;
 
 import com.android.documentsui.AbstractActionHandler;
+import com.android.documentsui.TestActionModeAddons;
 import com.android.documentsui.TestActivity;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.RootInfo;
 import com.android.documentsui.base.UserId;
+import com.android.documentsui.dirlist.SummariesViewModel;
 
 import java.util.function.Consumer;
+
+import javax.annotation.Nullable;
 
 public class TestActionHandler extends AbstractActionHandler<TestActivity> {
 
@@ -35,6 +49,8 @@ public class TestActionHandler extends AbstractActionHandler<TestActivity> {
     public final TestEventHandler<ItemDetails<String>> open = new TestEventHandler<>();
     public boolean mDeleteHappened;
     public boolean mRequestDisablingQuietModeHappened;
+    public boolean throwAtCreateApprovedHandlerIntent = false;
+    public boolean returnNullApprovedHandlerIntent = false;
 
     public DocumentInfo nextRootDocument;
 
@@ -43,6 +59,16 @@ public class TestActionHandler extends AbstractActionHandler<TestActivity> {
     }
 
     public TestActionHandler(TestEnv env) {
+        this(env, createMockSummariesViewModel());
+    }
+
+    private static SummariesViewModel createMockSummariesViewModel() {
+        SummariesViewModel mock = mock(SummariesViewModel.class);
+        doReturn(new MutableLiveData<>()).when(mock).getSummariesLiveData();
+        return mock;
+    }
+
+    public TestActionHandler(TestEnv env, SummariesViewModel summariesViewModel) {
         super(
                 TestActivity.create(env),
                 env.state,
@@ -50,8 +76,13 @@ public class TestActionHandler extends AbstractActionHandler<TestActivity> {
                 env.docs,
                 env.searchViewManager,
                 (String authority) -> null,
-                env.injector);
+                env.injector,
+                isUsePeekPreviewFlagEnabled() ? new TestPeekViewManager() : null,
+                new TestActionModeAddons(),
+                mock(Runnable.class),
+                null);
 
+        mSummariesViewModel = summariesViewModel;
         mEnv = env;
     }
 
@@ -86,9 +117,30 @@ public class TestActionHandler extends AbstractActionHandler<TestActivity> {
     }
 
     @Override
-    public void getRootDocument(RootInfo root, int timeout, Consumer<DocumentInfo> callback) {
+    public void getDocument(String authority, String documentId, UserId userId, int timeout,
+            Consumer<DocumentInfo> callback) {
         mEnv.mExecutor.submit(() -> {
             callback.accept(nextRootDocument);
         });
+    }
+
+    @Override
+    protected Uri getDefaultFallbackUri() {
+        return null;
+    }
+
+    @Override
+    public @Nullable Intent createApprovedHandlerIntent(ComponentName handler) {
+        if (throwAtCreateApprovedHandlerIntent) {
+            throw new UnsupportedOperationException();
+        }
+        if (returnNullApprovedHandlerIntent) {
+            return null;
+        }
+
+        final Intent intent = new Intent();
+        intent.setComponent(handler);
+        intent.addCategory(DocumentsContract.CATEGORY_APPROVED_DOCUMENT_HANDLER);
+        return intent;
     }
 }

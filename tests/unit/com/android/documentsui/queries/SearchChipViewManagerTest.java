@@ -17,12 +17,14 @@
 package com.android.documentsui.queries;
 
 import static com.android.documentsui.testing.DrawableAsserts.assertDrawablesEqual;
+import static com.android.documentsui.util.FlagUtils.isUseAllfilesRootForRecentsEnabled;
 
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 
 import static java.util.Objects.requireNonNull;
@@ -96,12 +98,26 @@ public final class SearchChipViewManagerTest {
     }
 
     @Test
+    @EnableFlags({
+        Flags.FLAG_USE_ALLFILES_ROOT_FOR_RECENTS,
+        Flags.FLAG_USE_SEARCH_V2_READ_ONLY,
+        Flags.FLAG_USE_MATERIAL3
+    })
+    public void testInitChipSets_hasCorrectChipCount_noOtherChips() throws Exception {
+        mSearchChipViewManager.initChipSets(TEST_MIME_TYPES);
+        mSearchChipViewManager.updateChips(new String[] {"*/*"});
+
+        assertThat(mChipGroup.getChildCount()).isEqualTo(TEST_MIME_TYPES.length);
+    }
+
+    @Test
+    @DisableFlags(Flags.FLAG_USE_ALLFILES_ROOT_FOR_RECENTS)
     public void testInitChipSets_hasCorrectChipCount() throws Exception {
         mSearchChipViewManager.initChipSets(TEST_MIME_TYPES);
         mSearchChipViewManager.updateChips(new String[] {"*/*"});
 
-        int totalChipLength = TEST_MIME_TYPES.length + TEST_OTHER_TYPES.length;
-        assertThat(mChipGroup.getChildCount()).isEqualTo(totalChipLength);
+        assertThat(mChipGroup.getChildCount())
+                .isEqualTo(TEST_MIME_TYPES.length + TEST_OTHER_TYPES.length);
     }
 
     @Test
@@ -155,18 +171,36 @@ public final class SearchChipViewManagerTest {
     }
 
     @Test
-    public void testUpdateChips_hasCorrectChipCount() throws Exception {
+    @EnableFlags({
+        Flags.FLAG_USE_ALLFILES_ROOT_FOR_RECENTS,
+        Flags.FLAG_USE_SEARCH_V2_READ_ONLY,
+        Flags.FLAG_USE_MATERIAL3
+    })
+    public void testUpdateChips_hasCorrectChipCount_noOtherChips() throws Exception {
         mSearchChipViewManager.updateChips(TEST_MIME_TYPES);
 
-        int totalChipLength = TEST_MIME_TYPES.length + TEST_OTHER_TYPES.length;
-        assertThat(mChipGroup.getChildCount()).isEqualTo(totalChipLength);
+        assertThat(mChipGroup.getChildCount()).isEqualTo(TEST_MIME_TYPES.length);
     }
 
     @Test
-    public void testUpdateChips_documentsFilterOnlyAvailableAboveR() throws Exception {
+    @DisableFlags(Flags.FLAG_USE_ALLFILES_ROOT_FOR_RECENTS)
+    public void testUpdateChips_hasCorrectChipCount() throws Exception {
+        mSearchChipViewManager.updateChips(TEST_MIME_TYPES);
+
+        assertThat(mChipGroup.getChildCount())
+                .isEqualTo(TEST_MIME_TYPES.length + TEST_OTHER_TYPES.length);
+    }
+
+    @Test
+    @EnableFlags({
+        Flags.FLAG_USE_ALLFILES_ROOT_FOR_RECENTS,
+        Flags.FLAG_USE_SEARCH_V2_READ_ONLY,
+        Flags.FLAG_USE_MATERIAL3
+    })
+    public void testUpdateChips_documentsFilterOnlyAvailableAboveR_noOtherChips() throws Exception {
         mSearchChipViewManager.updateChips(TEST_MIME_TYPES_INCLUDING_DOCUMENT);
 
-        int totalChipLength = TEST_MIME_TYPES_INCLUDING_DOCUMENT.length + TEST_OTHER_TYPES.length;
+        final int totalChipLength = TEST_MIME_TYPES_INCLUDING_DOCUMENT.length;
         if (VersionUtils.isAtLeastR()) {
             assertThat(mChipGroup.getChildCount()).isEqualTo(totalChipLength);
         } else {
@@ -175,8 +209,36 @@ public final class SearchChipViewManagerTest {
     }
 
     @Test
+    @DisableFlags(Flags.FLAG_USE_ALLFILES_ROOT_FOR_RECENTS)
+    public void testUpdateChips_documentsFilterOnlyAvailableAboveR() throws Exception {
+        mSearchChipViewManager.updateChips(TEST_MIME_TYPES_INCLUDING_DOCUMENT);
+
+        final int totalChipLength =
+                TEST_MIME_TYPES_INCLUDING_DOCUMENT.length + TEST_OTHER_TYPES.length;
+        if (VersionUtils.isAtLeastR()) {
+            assertThat(mChipGroup.getChildCount()).isEqualTo(totalChipLength);
+        } else {
+            assertThat(mChipGroup.getChildCount()).isEqualTo(totalChipLength - 1);
+        }
+    }
+
+    @Test
+    @EnableFlags({
+        Flags.FLAG_USE_ALLFILES_ROOT_FOR_RECENTS,
+        Flags.FLAG_USE_SEARCH_V2_READ_ONLY,
+        Flags.FLAG_USE_MATERIAL3
+    })
+    public void testUpdateChips_withSingleMimeType_hasCorrectChipCount_noOtherChips()
+            throws Exception {
+        mSearchChipViewManager.updateChips(new String[] {"image/*"});
+
+        assertThat(mChipGroup.getChildCount()).isEqualTo(0);
+    }
+
+    @Test
+    @DisableFlags(Flags.FLAG_USE_ALLFILES_ROOT_FOR_RECENTS)
     public void testUpdateChips_withSingleMimeType_hasCorrectChipCount() throws Exception {
-        mSearchChipViewManager.updateChips(new String[]{"image/*"});
+        mSearchChipViewManager.updateChips(new String[] {"image/*"});
 
         assertThat(mChipGroup.getChildCount()).isEqualTo(TEST_OTHER_TYPES.length);
     }
@@ -230,13 +292,29 @@ public final class SearchChipViewManagerTest {
     }
 
     @Test
+    @EnableFlags({
+        Flags.FLAG_USE_ALLFILES_ROOT_FOR_RECENTS,
+        Flags.FLAG_USE_SEARCH_V2_READ_ONLY,
+        Flags.FLAG_USE_MATERIAL3
+    })
+    public void testBindMirrorGroup_showRow_noOtherChips() throws Exception {
+        mSearchChipViewManager.updateChips(new String[] {"image/*"});
+
+        ViewGroup mirror = spy(new LinearLayout(mContext));
+        mSearchChipViewManager.bindMirrorGroup(mirror);
+
+        assertThat(mirror.getVisibility()).isEqualTo(View.GONE);
+    }
+
+    @Test
+    @DisableFlags(Flags.FLAG_USE_ALLFILES_ROOT_FOR_RECENTS)
     public void testBindMirrorGroup_showRow() throws Exception {
         mSearchChipViewManager.updateChips(new String[] {"image/*"});
 
         ViewGroup mirror = spy(new LinearLayout(mContext));
         mSearchChipViewManager.bindMirrorGroup(mirror);
 
-        assertThat(View.VISIBLE).isEqualTo(mirror.getVisibility());
+        assertThat(mirror.getVisibility()).isEqualTo(View.VISIBLE);
     }
 
     @DesktopTest(cujs = {"b/434068218"})
@@ -255,6 +333,9 @@ public final class SearchChipViewManagerTest {
         ViewParent result = mChipGroup.getParent().getParent();
         assertEquals(grandparent, result);
 
+        // Mock isAttachedToWindow so reorderCheckedChips executes the animation/scroll block
+        doReturn(true).when(mChipGroup).isAttachedToWindow();
+
         mSearchChipViewManager.initChipSets(
                 new String[] {"image/*", "audio/*", "video/*", "text/*"});
         mSearchChipViewManager.updateChips(new String[] {"*/*"});
@@ -266,11 +347,11 @@ public final class SearchChipViewManagerTest {
         assertEquals(6, mChipGroup.getChildCount());
         Chip lastChip = (Chip) mChipGroup.getChildAt(5);
 
-        // chip.setChecked will trigger reorder animation, which needs to be run inside
+        // performClick will trigger reorder animation, which needs to be run inside
         // the looper thread.
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-            // Check last chip will move it to the first child and reset scroll view.
-            lastChip.setChecked(true);
+            // Click last chip will move it to the first child and reset scroll view.
+            lastChip.performClick();
             assertEquals(0, grandparent.getScrollX());
         });
     }

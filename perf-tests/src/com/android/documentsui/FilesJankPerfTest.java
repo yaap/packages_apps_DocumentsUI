@@ -32,8 +32,7 @@ import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiScrollable;
 
 import com.android.documentsui.bots.DirectoryListBot;
-import com.android.documentsui.bots.SidebarBot;
-import com.android.documentsui.bots.UiBot;
+import com.android.documentsui.bots.EspressoBotsKt;
 import com.android.documentsui.files.FilesActivity;
 
 @LargeTest
@@ -42,8 +41,6 @@ public class FilesJankPerfTest extends JankTestBase {
     private static final int MAX_FLINGS = 10;
     private static final int BOT_TIMEOUT = 5000;
 
-    private UiBot mUiBot;
-    private SidebarBot mRootsListBot;
     private DirectoryListBot mDirListBot;
     private Activity mActivity = null;
 
@@ -51,9 +48,6 @@ public class FilesJankPerfTest extends JankTestBase {
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
         final Context context = getInstrumentation().getTargetContext();
         final UiAutomation automation = getInstrumentation().getUiAutomation();
-        mUiBot = new UiBot(device, context, BOT_TIMEOUT);
-        mRootsListBot = new SidebarBot(device, automation, context, mUiBot, BOT_TIMEOUT);
-        mDirListBot = new DirectoryListBot(device, automation, context, BOT_TIMEOUT);
 
         final Intent intent = new Intent(context, FilesActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -62,6 +56,14 @@ public class FilesJankPerfTest extends JankTestBase {
             device.setOrientationNatural();
         } catch (RemoteException e) {
         }
+
+        mDirListBot =
+                new DirectoryListBot(
+                        device,
+                        automation,
+                        context,
+                        BOT_TIMEOUT,
+                        ((BaseActivity) mActivity).getLayoutId());
     }
 
     public void tearDownInLoop() {
@@ -82,7 +84,10 @@ public class FilesJankPerfTest extends JankTestBase {
     }
 
     public void openRoot() throws Exception {
-        mRootsListBot.openRoot(STRESS_ROOT_2_ID);
+        EspressoBotsKt.openRoot(
+                getInstrumentation().getTargetContext(),
+                STRESS_ROOT_2_ID,
+                ((BaseActivity) mActivity).getLayoutId());
     }
 
     @JankTest(expectedFrames=0, beforeLoop="setUpInLoop", afterLoop="tearDownInLoop")

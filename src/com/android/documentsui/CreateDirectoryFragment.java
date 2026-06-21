@@ -19,6 +19,8 @@ package com.android.documentsui;
 import static android.content.ContentResolver.wrap;
 
 import static com.android.documentsui.base.SharedMinimal.TAG;
+import static com.android.documentsui.util.FileUtils.InvalidNameError;
+import static com.android.documentsui.util.FileUtils.sanitizeDirectoryName;
 import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.app.Dialog;
@@ -44,7 +46,6 @@ import android.widget.TextView.OnEditorActionListener;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
-import androidx.fragment.app.DialogFragment;
 import androidx.fragment.app.FragmentManager;
 
 import com.android.documentsui.base.DocumentInfo;
@@ -55,10 +56,8 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.snackbar.Snackbar;
 import com.google.android.material.textfield.TextInputLayout;
 
-/**
- * Dialog to create a new directory.
- */
-public class CreateDirectoryFragment extends DialogFragment {
+/** Dialog to create a new directory. */
+public class CreateDirectoryFragment extends DocumentsUIDialogFragment {
     private static final String TAG_CREATE_DIRECTORY = "create_directory";
     private @Nullable DialogInterface mDialog;
     private EditText mEditText;
@@ -125,15 +124,16 @@ public class CreateDirectoryFragment extends DialogFragment {
     }
 
     private void createDirectory(String name) {
-        if (name.isEmpty()) {
-            mInputWrapper.setError(getContext().getString(getRes(R.string.add_folder_name_error)));
-        } else {
+        try {
+            name = sanitizeDirectoryName(name);
             final BaseActivity activity = (BaseActivity) getActivity();
             final DocumentInfo cwd = activity.getCurrentDirectory();
 
             new CreateDirectoryTask(activity, cwd, name).executeOnExecutor(
                     ProviderExecutor.forAuthority(cwd.authority));
             mDialog.dismiss();
+        } catch (InvalidNameError error) {
+            mInputWrapper.setError(getContext().getString(error.mResource));
         }
     }
 

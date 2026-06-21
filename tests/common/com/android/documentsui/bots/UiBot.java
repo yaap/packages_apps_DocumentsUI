@@ -17,8 +17,11 @@
 package com.android.documentsui.bots;
 
 import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.Espresso.pressBack;
 import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
+import static androidx.test.espresso.matcher.RootMatchers.isPlatformPopup;
 import static androidx.test.espresso.matcher.ViewMatchers.hasFocus;
 import static androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
@@ -29,6 +32,7 @@ import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
 import static com.android.documentsui.util.FlagUtils.isTrashFlowEnabled;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
+import static com.android.documentsui.util.Material3Config.getRes;
 
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertNotNull;
@@ -37,17 +41,23 @@ import static junit.framework.Assert.assertNull;
 import static org.hamcrest.CoreMatchers.allOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.not;
 
+import android.annotation.LayoutRes;
 import android.content.Context;
 import android.view.View;
 
+import androidx.annotation.StringRes;
 import androidx.appcompat.widget.Toolbar;
 import androidx.test.InstrumentationRegistry;
 import androidx.test.espresso.Espresso;
+import androidx.test.espresso.NoMatchingRootException;
+import androidx.test.espresso.NoMatchingViewException;
 import androidx.test.espresso.action.ViewActions;
 import androidx.test.espresso.matcher.BoundedMatcher;
 import androidx.test.espresso.matcher.ViewMatchers;
 import androidx.test.uiautomator.By;
+import androidx.test.uiautomator.BySelector;
 import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject;
 import androidx.test.uiautomator.UiObject2;
@@ -56,8 +66,11 @@ import androidx.test.uiautomator.UiSelector;
 import androidx.test.uiautomator.Until;
 
 import com.android.documentsui.R;
+import com.android.documentsui.actions.WaitUntilExistsInRecyclerView;
 
 import com.google.android.material.appbar.MaterialToolbar;
+
+import junit.framework.AssertionFailedError;
 
 import org.hamcrest.Description;
 import org.hamcrest.Matcher;
@@ -88,8 +101,8 @@ public class UiBot extends Bots.BaseBot {
 
     public static String targetPackageName;
 
-    public UiBot(UiDevice device, Context context, int timeout) {
-        super(device, context, timeout);
+    public UiBot(UiDevice device, Context context, Long timeout, @LayoutRes Integer layoutId) {
+        super(device, context, timeout, layoutId);
         targetPackageName =
                 InstrumentationRegistry.getInstrumentation().getTargetContext().getPackageName();
     }
@@ -132,6 +145,28 @@ public class UiBot extends Bots.BaseBot {
     }
 
     /**
+     * Waits for and asserts the presence of a window with the {@code expected} title.
+     *
+     * <p>After the wait, {@link #assertWindowTitle(String)} is called.
+     *
+     * @param expected The title string expected to be visible.
+     * @throws AssertionError if the expected window title is not found within {@code mTimeout}.
+     */
+    public void waitForWindowTitle(String expected) {
+        BySelector selector;
+        if (!isUseMaterial3FlagEnabled() && expected.equals("Recent")) {
+            final String resID = mContext.getResources().getResourceEntryName(R.id.header_title);
+            selector = By.res(targetPackageName, resID).text("Recent files");
+
+        } else {
+            final String resID = mContext.getResources().getResourceEntryName(R.id.toolbar);
+            selector = By.res(targetPackageName, resID).hasDescendant(By.text(expected));
+        }
+        mDevice.wait(Until.hasObject(selector), mTimeout);
+        assertWindowTitle(expected);
+    }
+
+    /**
      * Checks that the search bar is visible.
      */
     public void assertSearchBarShow() {
@@ -165,6 +200,11 @@ public class UiBot extends Bots.BaseBot {
      */
     public void assertLocationTriggerShows() {
         onView(withId(R.id.search_location_trigger)).check(matches(isDisplayed()));
+    }
+
+    /** Checks that the UI chip that toggles location search menu is visible. */
+    public void assertLocationTriggerHidden() {
+        onView(withId(R.id.search_location_trigger)).check(matches(not(isDisplayed())));
     }
 
     /**
@@ -203,8 +243,7 @@ public class UiBot extends Bots.BaseBot {
     }
 
     public void setDialogText(String text) throws UiObjectNotFoundException {
-        onView(TEXT_ENTRY)
-                .perform(ViewActions.replaceText(text));
+        onView(TEXT_ENTRY).check(matches(isDisplayed())).perform(ViewActions.replaceText(text));
     }
 
     public void assertDialogText(String expected) throws UiObjectNotFoundException {
@@ -230,6 +269,13 @@ public class UiBot extends Bots.BaseBot {
         assertNotNull(listModeBtn);
     }
 
+    /** Checks that the current view state is in grid mode. */
+    public boolean isInGridMode() {
+        // In grid mode, there should be the list mode button that is visible.
+        final UiObject2 listModeBtn = menuListMode();
+        return listModeBtn != null;
+    }
+
     public void switchToListMode() {
         final UiObject2 listMode = menuListMode();
         if (listMode != null) {
@@ -253,13 +299,19 @@ public class UiBot extends Bots.BaseBot {
     }
 
     UiObject2 menuGridMode() {
-        // Note that we're using By.desc rather than By.res, because of b/25285770
-        return find(By.desc("Grid view"));
+        return menuGridOrListMode()[0];
     }
 
     UiObject2 menuListMode() {
-        // Note that we're using By.desc rather than By.res, because of b/25285770
-        return find(By.desc("List view"));
+        return menuGridOrListMode()[1];
+    }
+
+    private UiObject2[] menuGridOrListMode() {
+        return findAny(
+                new BySelector[] {
+                    By.res(mTargetPackage + ":id/sub_menu_grid"),
+                    By.res(mTargetPackage + ":id/sub_menu_list"),
+                });
     }
 
     public void clickToolbarItem(int id) {
@@ -276,17 +328,34 @@ public class UiBot extends Bots.BaseBot {
                 ViewMatchers.isDescendantOfA(actionBar));
     }
 
-    public void clickActionbarOverflowItem(String label) {
-        onView(getActionbarOverflow()).perform(clickAndRetryOnLongPress());
-        mDevice.waitForIdle();
+    private void clickOverflowItem(Matcher<View> toolbarOrSelectionBarMatcher, String label) {
+        final int MAX_ATTEMPTS = 5;
+        for (int i = 1; i <= MAX_ATTEMPTS; i++) {
+            onView(toolbarOrSelectionBarMatcher).perform(clickAndRetryOnLongPress());
+            try {
+                // Wait for the menu popup window to appear.
+                onView(withClassName(endsWith("MenuDropDownListView")))
+                        .inRoot(isPlatformPopup())
+                        .check(matches(isDisplayed()));
+                // Exit loop if the above succeeds: the popup is displayed.
+                break;
+            } catch (NoMatchingViewException | NoMatchingRootException | AssertionFailedError e) {
+                if (i == MAX_ATTEMPTS) {
+                    throw new AssertionError(
+                            "Failed to find menup popup after " + i + " attempts", e);
+                }
+            }
+        }
         // Click the item by label, since Espresso doesn't support lookup by id on overflow.
-        onView(withText(label)).perform(click());
+        onView(withText(label)).inRoot(isPlatformPopup()).perform(click());
+    }
+
+    public void clickActionbarOverflowItem(String label) {
+        clickOverflowItem(getActionbarOverflow(), label);
     }
 
     public void clickToolbarOverflowItem(String label) {
-        onView(TOOLBAR_OVERFLOW).perform(clickAndRetryOnLongPress());
-        // Click the item by label, since Espresso doesn't support lookup by id on overflow.
-        onView(withText(label)).perform(click());
+        clickOverflowItem(TOOLBAR_OVERFLOW, label);
     }
 
     public boolean waitForActionModeBarToAppear() {
@@ -320,7 +389,7 @@ public class UiBot extends Bots.BaseBot {
             throw new UiObjectNotFoundException("ActionMode bar not found");
         }
         if (isTrashFlowEnabled()) {
-            clickActionItem("Delete permanently");
+            clickActionItem(mContext.getString(R.string.menu_permanently_delete));
         } else {
             clickToolbarItem(R.id.action_menu_delete);
         }
@@ -341,8 +410,30 @@ public class UiBot extends Bots.BaseBot {
         return title;
     }
 
-    public UiObject findRenameErrorMessage() {
-        UiSelector selector = new UiSelector().text(mContext.getString(R.string.name_conflict));
+    /**
+     * Finds a {@link UiObject} containing a rename error message using its resource id.
+     *
+     * @param resId The resource id of the string containing the target error message text.
+     * @return A {@link UiObject} representing the found error message.
+     */
+    public UiObject findRenameErrorMessage(@StringRes int resId) {
+        UiSelector selector = new UiSelector().text(mContext.getString(resId));
+        UiObject title = mDevice.findObject(selector);
+        title.waitForExists(mTimeout);
+        return title;
+    }
+
+    /**
+     * Finds a {@link UiObject} containing text that matches the result of concatenating a
+     * string resource and a suffix string.
+     *
+     * @param resId The resource id of the string containing the target error message text.
+     * @param suffix The string to append to the resource string.
+     * @return A {@link UiObject} matching the concatenated text.
+     */
+    public UiObject findUiObjectWithResIdAndSuffix(@StringRes int resId, String suffix) {
+        String expectedText = mContext.getString(resId) + suffix;
+        UiSelector selector = new UiSelector().text(expectedText);
         UiObject title = mDevice.findObject(selector);
         title.waitForExists(mTimeout);
         return title;
@@ -418,5 +509,153 @@ public class UiBot extends Bots.BaseBot {
                 .descriptionContains("More options");
         // TODO: use the system string ? android.R.string.action_menu_overflow_description
         return mDevice.findObject(selector);
+    }
+
+    /**
+     * Hides hidden files if the current settings is to show hidden files.
+     */
+    public void hideHiddenFilesIfNeeded() throws Exception {
+        openOverflowMenu();
+        UiObject2 hideHiddenFilesMenu = mDevice.findObject(
+                By.text(mContext.getString(
+                        R.string.menu_hide_hidden_files)));
+        if (hideHiddenFilesMenu != null) {
+            hideHiddenFilesMenu.click();
+            mDevice.waitForIdle();
+        } else {
+            // Close the menu popup via Back key.
+            pressBack();
+            // Verify the menu popup is closed by checking if "Show hidden files" menu item is gone.
+            onView(withText(mContext.getString(R.string.menu_show_hidden_files))).check(
+                    doesNotExist());
+        }
+    }
+
+    /** Shows hidden files if the current settings is to hide hidden files. */
+    public void showHiddenFilesIfNeeded() throws Exception {
+        openOverflowMenu();
+        UiObject2 showHiddenFilesMenu =
+                mDevice.findObject(By.text(mContext.getString(R.string.menu_show_hidden_files)));
+        if (showHiddenFilesMenu != null) {
+            showHiddenFilesMenu.click();
+            mDevice.waitForIdle();
+        } else {
+            // Close the menu popup via Back key.
+            pressBack();
+            // Verify the menu popup is closed by checking if "Hide hidden files" menu item is gone.
+            onView(withText(mContext.getString(R.string.menu_hide_hidden_files)))
+                    .check(doesNotExist());
+        }
+    }
+
+    /**
+     * Click the toolbar menu to show hidden files.
+     */
+    public void showHiddenFiles() {
+        clickToolbarOverflowItem(mContext.getString(R.string.menu_show_hidden_files));
+        mDevice.waitForIdle();
+    }
+
+    /**
+     * Click the toolbar menu to hide hidden files.
+     */
+    public void hideHiddenFiles() {
+        clickToolbarOverflowItem(mContext.getString(R.string.menu_hide_hidden_files));
+        mDevice.waitForIdle();
+    }
+
+    private Matcher getOfflineBannerMatcher() {
+        // The banner has id item_root with a TextView descendant with the offline message.
+        var textMessage =
+                allOf(
+                        withId(R.id.message_textview),
+                        withText(
+                                mContext.getString(
+                                        getRes(R.string.you_are_offline_banner_message))));
+        return allOf(ViewMatchers.withId(R.id.item_root), ViewMatchers.hasDescendant(textMessage));
+    }
+
+    /** Asserts that the "You're offline" banner does not exist. */
+    public void assertOfflineBannerDoesNotExist() {
+        onView(getOfflineBannerMatcher()).check(doesNotExist());
+    }
+
+    /** Asserts that the "You're offline" banner is currently visible. */
+    public void assertOfflineBannerIsVisible() {
+        // Wait for the banner to exist first.
+        onView(withId(R.id.dir_list))
+                .perform(new WaitUntilExistsInRecyclerView(getOfflineBannerMatcher(), mTimeout));
+        onView(getOfflineBannerMatcher()).check(matches(isDisplayed()));
+    }
+
+    /**
+     * Asserts that the "Empty Trash" banner is currently visible. This banner only appears on the
+     * trash page.
+     */
+    public void assertEmptyTrashBannerIsVisible() {
+        onView(
+                        allOf(
+                                withId(R.id.message_textview),
+                                withText(mContext.getString(R.string.empty_trash_banner_message)),
+                                isDisplayed()))
+                .check(matches(isDisplayed()));
+    }
+
+    /**
+     * Asserts whether the "Empty Trash" button is enabled or disabled.
+     *
+     * @param enabled Expected enabled state of the button.
+     */
+    public void assertEmptyTrashNowButtonEnabled(boolean enabled) {
+        // Define the matcher for the "Empty Trash now" button
+        Matcher<View> buttonMatcher =
+                allOf(
+                        withId(R.id.dismiss_button),
+                        withText(mContext.getString(R.string.empty_trash_banner_button)),
+                        isDisplayed());
+
+        // Check the enabled state
+        if (enabled) {
+            onView(buttonMatcher).check(matches(ViewMatchers.isEnabled()));
+        } else {
+            onView(buttonMatcher).check(matches(not(ViewMatchers.isEnabled())));
+        }
+    }
+
+    /**
+     * Clicks the "Empty Trash" button, which is found within the "Empty Trash" banner on the
+     * trash page.
+     */
+    public void clickEmptyTrashNowButton() {
+        onView(
+                allOf(
+                        withId(R.id.dismiss_button),
+                        withText(mContext.getString(R.string.empty_trash_banner_button)),
+                        isDisplayed()))
+                .perform(click());
+    }
+
+    /** Asserts that the dialog title matches the given resource ID. */
+    public void assertDialogTitle(int resId) {
+        onView(withText(resId)).check(matches(isDisplayed()));
+    }
+
+    /** Asserts that the dialog title matches the given text. */
+    public void assertDialogTitle(String text) {
+        onView(withText(text)).check(matches(isDisplayed()));
+    }
+
+    /** Asserts that the dialog message matches the given resource ID. */
+    public void assertDialogMessage(int resId) {
+        onView(withId(android.R.id.message))
+                .check(matches(withText(resId)))
+                .check(matches(isDisplayed()));
+    }
+
+    /** Asserts that the dialog message matches the given text. */
+    public void assertDialogMessage(String text) {
+        onView(withId(android.R.id.message))
+                .check(matches(withText(text)))
+                .check(matches(isDisplayed()));
     }
 }

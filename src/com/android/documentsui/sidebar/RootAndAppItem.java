@@ -16,6 +16,7 @@
 
 package com.android.documentsui.sidebar;
 
+import static com.android.documentsui.util.FlagUtils.isHomeScreenFilesFlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.content.Context;
@@ -55,7 +56,7 @@ class RootAndAppItem extends RootItem {
 
     @Override
     boolean showAppDetails() {
-        mActionHandler.showAppDetails(resolveInfo, userId);
+        getActionHandler().showAppDetails(resolveInfo, userId);
         return true;
     }
 
@@ -70,24 +71,32 @@ class RootAndAppItem extends RootItem {
                                 userId.getUserBadgedLabel(context, root.title));
 
         bindAction(
-                convertView, View.VISIBLE, getRes(R.drawable.ic_exit_to_app), contentDescription);
+                convertView,
+                isHomeScreenFilesFlagEnabled() ? View.GONE : View.VISIBLE,
+                getRes(R.drawable.ic_exit_to_app),
+                contentDescription);
         bindIconAndTitle(convertView);
         bindSummary(convertView, root.summary);
     }
 
     @Override
     protected void onActionClick(View view) {
-        mActionHandler.openRoot(resolveInfo, userId);
+        getActionHandler().openRoot(resolveInfo, userId);
     }
 
     @Override
     public String toString() {
         return "RootAndAppItem{"
-                + "id=" + stringId
-                + ", userId=" + userId
-                + ", root=" + root
-                + ", resolveInfo=" + resolveInfo
-                + ", docInfo=" + docInfo
+                + "id="
+                + stringId
+                + ", userId="
+                + userId
+                + ", root="
+                + root
+                + ", resolveInfo="
+                + resolveInfo
+                + ", docInfo="
+                + getDocInfo()
                 + "}";
     }
 }

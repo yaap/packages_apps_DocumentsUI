@@ -43,6 +43,7 @@ import org.junit.Test
 /** Tests TrashJob. */
 @MediumTest
 @RequiresFlagsEnabled(FLAG_ENABLE_DOCUMENTS_TRASH_API)
+@EnableFlags(Flags.FLAG_USE_MATERIAL3, Flags.FLAG_ENABLE_TRASH_FLOW_RO)
 @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
 internal class TrashJobTest : AbstractJobTest<TrashJob>() {
     @get:Rule val setFlags = OverrideFlagsRule()
@@ -50,20 +51,13 @@ internal class TrashJobTest : AbstractJobTest<TrashJob>() {
     @get:Rule val checkFlagsRule: CheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule()
 
     override fun setUp() {
-        // Skip test if the platform SDK is not newer than Android Baklava (SDK 36).
-        // The Trash feature under test relies on DocumentsContract APIs introduced in the
-        // Android release after Baklava (SDK 36).
-        // As DocumentsUI is a Mainline module, it's subject to MTS testing, which runs on
-        // older Android base builds to verify backward compatibility. However, this specific
-        // Trash feature lacks backward compatibility with platforms at or below Baklava.
-        // This assumption prevents failures when the test runs on an older base OS
-        // without the necessary APIs.
+        // TODO(b/457843307): Verify after the SDK is finalized. This test depends on StubProvider,
+        //  which currently encounters a NoSuchMethodError when the platform flag is used.
         assumeTrue(VersionUtils.isGreaterThanB())
         super.setUp()
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_ENABLE_TRASH_FLOW_RO)
     fun testTrashSingleFile() {
         val testDir1 = mDocs.createFolder(mSrcRoot, "dir1")
         val fileUri = mDocs.createDocument(testDir1, "text/plain", "document.txt")
@@ -91,7 +85,8 @@ internal class TrashJobTest : AbstractJobTest<TrashJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Trashing document.txt")
+            assertThat(filename).isEqualTo("document.txt")
+            assertThat(numFiles).isEqualTo(1)
         }
 
         mDocs.assertHasDirectory(mSrcRoot, "dir1")
@@ -107,7 +102,6 @@ internal class TrashJobTest : AbstractJobTest<TrashJob>() {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_ENABLE_TRASH_FLOW_RO)
     fun testTrashMultipleFile() {
         val testDir1 = mDocs.createFolder(mSrcRoot, "dir1")
         val file1Uri = mDocs.createDocument(testDir1, "text/plain", "document1.txt")
@@ -137,7 +131,7 @@ internal class TrashJobTest : AbstractJobTest<TrashJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Trashing 2 files")
+            assertThat(numFiles).isEqualTo(2)
         }
 
         mDocs.assertHasDirectory(mSrcRoot, "dir1")
@@ -154,7 +148,6 @@ internal class TrashJobTest : AbstractJobTest<TrashJob>() {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_ENABLE_TRASH_FLOW_RO)
     fun testTrashFolder() {
         val testDir1 = mDocs.createFolder(mSrcRoot, "dir1")
         mDocs.createDocument(testDir1, "text/plain", "document1.txt")
@@ -186,7 +179,8 @@ internal class TrashJobTest : AbstractJobTest<TrashJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Trashing dir1")
+            assertThat(filename).isEqualTo("dir1")
+            assertThat(numFiles).isEqualTo(1)
         }
 
         // Parent root should not consist "dir1", only .trash-storage
@@ -216,7 +210,6 @@ internal class TrashJobTest : AbstractJobTest<TrashJob>() {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_ENABLE_TRASH_FLOW_RO)
     fun testTrashFailedNoFileFound() {
         // create a document in mDestRoot, trashDocument only working for mSrcRoot,
         // so this will give FileNotFoundException
@@ -245,7 +238,7 @@ internal class TrashJobTest : AbstractJobTest<TrashJob>() {
         with(job.getFailureNotification()) {
             assertThat(category).isEqualTo(CATEGORY_ERROR)
             with(extras) {
-                assertThat(getCharSequence(EXTRA_TITLE)).isEqualTo("Couldn’t trash 1 item")
+                assertThat(getCharSequence(EXTRA_TITLE)).isEqualTo("Couldn’t trash 1 file")
                 assertThat(getCharSequence(EXTRA_TEXT)).isEqualTo("Tap to view details")
             }
         }

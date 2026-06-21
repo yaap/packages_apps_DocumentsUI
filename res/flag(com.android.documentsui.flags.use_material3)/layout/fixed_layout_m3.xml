@@ -15,14 +15,20 @@
 -->
 
 <!-- CoordinatorLayout is necessary for various components (e.g. Snackbars, and
-     floating action buttons) to operate correctly. -->
+     floating action buttons) to operate correctly. This is the root container of the whole app,
+     make it focusable so it can act as a "focus sink" for the system, e.g. when there's nothing
+     to be focused, the system will focus on this view instead. This is to avoid the system to
+     focus on the top-left view (e.g. Recent root in the sidenav) in certain scenarios, e.g. for
+     unhandled keypress like Enter/Space on the black area of the file list. A custom background
+     is provided to prevent the default grey-ish overlay for focused state. -->
 <androidx.coordinatorlayout.widget.CoordinatorLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:id="@+id/coordinator_layout"
-    android:background="?attr/colorSurfaceContainer"
-    android:focusable="true">
+    android:background="@drawable/coordinator_layout_background"
+    android:focusable="true"
+    android:descendantFocusability="beforeDescendants">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -31,7 +37,6 @@
         android:baselineAligned="false"
         android:background="?attr/colorSurfaceContainer"
         android:paddingTop="@dimen/layout_padding_top"
-        android:paddingBottom="@dimen/layout_padding_bottom"
         android:paddingEnd="@dimen/layout_padding_end">
         <!-- Navigation: left hand side. -->
         <FrameLayout
@@ -83,8 +88,8 @@
                             android:layout_width="match_parent"
                             android:layout_height="?android:attr/actionBarSize"
                             android:gravity="center_vertical"
-                            android:text="@string/search_bar_hint"
-                            android:textAppearance="@style/SearchBarTitle" />
+                            android:text="@string/search_bar_generic_hint"
+                            android:textAppearance="@style/AppBarTitle" />
 
                     </com.google.android.material.appbar.MaterialToolbar>
 
@@ -93,7 +98,6 @@
                         android:layout_width="match_parent"
                         android:layout_height="?attr/actionBarSize"
                         android:touchscreenBlocksFocus="false"
-                        android:background="?attr/colorSurfaceBright"
                         android:visibility="gone"/>
 
                 </FrameLayout>
@@ -138,10 +142,22 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/main_container_section_gap"
+                android:orientation="vertical"
+                android:clipToOutline="true"
                 android:background="@drawable/main_container_bottom_section_background">
 
                 <com.android.documentsui.HorizontalBreadcrumb
                     android:id="@+id/horizontal_breadcrumb"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="@dimen/breadcrumb_padding_horizontal" />
+
+                <!-- We only want the path item to be focusable, the whole row should not be
+                focusable. -->
+                <com.android.documentsui.breadcrumbs.BreadcrumbView
+                    android:id="@+id/breadcrumb_view_v2"
+                    android:focusable="false"
+                    android:background="?attr/colorSurfaceBright"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:paddingHorizontal="@dimen/breadcrumb_padding_horizontal" />

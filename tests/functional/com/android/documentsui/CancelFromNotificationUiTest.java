@@ -21,6 +21,8 @@ import static android.content.Context.RECEIVER_EXPORTED;
 import static com.android.documentsui.StubProvider.EXTRA_SIZE;
 import static com.android.documentsui.StubProvider.ROOT_0_ID;
 import static com.android.documentsui.StubProvider.ROOT_1_ID;
+import static com.android.documentsui.flags.Flags.FLAG_DESKTOP_UX_PHASE_2_RO;
+import static com.android.documentsui.util.Material3Config.getRes;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -32,18 +34,20 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.Uri;
 import android.os.Bundle;
+import android.platform.test.annotations.DisableFlags;
 
 import androidx.test.filters.LargeTest;
 
 import com.android.documentsui.base.RootInfo;
+import com.android.documentsui.bots.EspressoBotsKt;
 import com.android.documentsui.files.FilesActivity;
 import com.android.documentsui.filters.HugeLongTest;
+import com.android.documentsui.rules.OverrideFlagsRule;
 import com.android.documentsui.rules.TestFilesRule;
 import com.android.documentsui.services.TestNotificationService;
 
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 
@@ -59,6 +63,8 @@ import java.util.concurrent.TimeUnit;
  */
 @LargeTest
 public class CancelFromNotificationUiTest extends ActivityTestJunit4<FilesActivity> {
+    @Rule public final OverrideFlagsRule mOverrideFlagsRule = new OverrideFlagsRule();
+
     private static final String TAG = "CancelFromNotificationUiTest";
     private static final String TARGET_FILE = "stub.data";
     private static final int BUFFER_SIZE = 10 * 1024 * 1024;
@@ -141,9 +147,8 @@ public class CancelFromNotificationUiTest extends ActivityTestJunit4<FilesActivi
 
     @HugeLongTest
     @Test
+    @DisableFlags(FLAG_DESKTOP_UX_PHASE_2_RO)
     public void testCopyDocument_Cancel() throws Exception {
-        bots.roots.openRoot(ROOT_0_ID);
-
         bots.directory.findDocument(TARGET_FILE);
         device.waitForIdle();
 
@@ -162,36 +167,34 @@ public class CancelFromNotificationUiTest extends ActivityTestJunit4<FilesActivi
     @HugeLongTest
     @Test
     public void testCopyDocument_CancelFromNotification() throws Exception {
-        bots.roots.openRoot(ROOT_0_ID);
         bots.directory.findDocument(TARGET_FILE);
         device.waitForIdle();
 
         bots.directory.selectDocument(TARGET_FILE, 1);
         device.waitForIdle();
 
-        bots.main.clickActionbarOverflowItem(context.getResources().getString(R.string.menu_copy));
-        device.waitForIdle();
+        // Must use openRoot below as the UI itself is being tested
+        bots.main.doCopy(
+                () -> {
+                    EspressoBotsKt.openRoot(context, ROOT_1_ID, getRes(R.layout.pick_activity));
+                });
 
-        bots.roots.openRoot(ROOT_1_ID);
-        bots.main.clickDialogOkButton(/* closeSoftKeyboard */ false);
-        device.waitForIdle();
         mCountDownLatch.await(WAIT_TIME_SECONDS, TimeUnit.SECONDS);
         assertTrue(mErrorReason, mOperationExecuted);
 
-        bots.roots.openRoot(ROOT_1_ID);
+        switchRoot(ROOT_1_ID);
         device.waitForIdle();
         assertFalse(bots.directory.hasDocuments(TARGET_FILE));
 
-        bots.roots.openRoot(ROOT_0_ID);
+        switchRoot(ROOT_0_ID);
         device.waitForIdle();
         assertTrue(bots.directory.hasDocuments(TARGET_FILE));
     }
 
     @HugeLongTest
     @Test
+    @DisableFlags(FLAG_DESKTOP_UX_PHASE_2_RO)
     public void testMoveDocument_Cancel() throws Exception {
-        bots.roots.openRoot(ROOT_0_ID);
-
         bots.directory.findDocument(TARGET_FILE);
         device.waitForIdle();
 
@@ -208,30 +211,27 @@ public class CancelFromNotificationUiTest extends ActivityTestJunit4<FilesActivi
     }
 
     @HugeLongTest
-    @Ignore("TODO(b/437236527): deflake and re-enable")
     @Test
     public void testMoveDocument_CancelFromNotification() throws Exception {
-        bots.roots.openRoot(ROOT_0_ID);
         bots.directory.findDocument(TARGET_FILE);
         device.waitForIdle();
 
         bots.directory.selectDocument(TARGET_FILE, 1);
         device.waitForIdle();
 
-        bots.main.clickActionbarOverflowItem(context.getResources().getString(R.string.menu_move));
-        device.waitForIdle();
-
-        bots.roots.openRoot(ROOT_1_ID);
-        bots.main.clickDialogOkButton(/* closeSoftKeyboard */ false);
-        device.waitForIdle();
+        // Must use openRoot below as the UI itself is being tested
+        bots.main.doMove(
+                () -> {
+                    EspressoBotsKt.openRoot(context, ROOT_1_ID, getRes(R.layout.pick_activity));
+                });
         mCountDownLatch.await(WAIT_TIME_SECONDS, TimeUnit.SECONDS);
         assertTrue(mErrorReason, mOperationExecuted);
 
-        bots.roots.openRoot(ROOT_1_ID);
+        switchRoot(ROOT_1_ID);
         device.waitForIdle();
         assertFalse(bots.directory.hasDocuments(TARGET_FILE));
 
-        bots.roots.openRoot(ROOT_0_ID);
+        switchRoot(ROOT_0_ID);
         device.waitForIdle();
         assertTrue(bots.directory.hasDocuments(TARGET_FILE));
     }

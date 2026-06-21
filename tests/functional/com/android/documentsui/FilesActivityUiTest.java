@@ -24,24 +24,31 @@ import static androidx.test.espresso.matcher.ViewMatchers.withId;
 
 import static com.android.documentsui.StubProvider.ROOT_0_ID;
 import static com.android.documentsui.StubProvider.ROOT_1_ID;
-import static com.android.documentsui.base.Providers.AUTHORITY_STORAGE;
 import static com.android.documentsui.base.Providers.ROOT_ID_DEVICE;
+import static com.android.documentsui.flags.Flags.FLAG_HOME_SCREEN_FILES_RO;
 import static com.android.documentsui.flags.Flags.FLAG_SINGLE_CLICK_TO_SELECT;
 import static com.android.documentsui.flags.Flags.FLAG_USE_MATERIAL3;
 import static com.android.documentsui.util.Material3Config.getRes;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import android.annotation.Nullable;
+import android.app.Activity;
 import android.app.Instrumentation;
-import android.content.ContentResolver;
+import android.content.Context;
+import android.content.res.Configuration;
 import android.net.Uri;
 import android.platform.test.annotations.DesktopTest;
 import android.platform.test.annotations.DisableFlags;
 import android.platform.test.annotations.EnableFlags;
+import android.view.View;
 
-import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.test.filters.LargeTest;
 import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.UiObject2;
@@ -50,7 +57,6 @@ import androidx.test.uiautomator.Until;
 
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.RootInfo;
-import com.android.documentsui.base.UserId;
 import com.android.documentsui.files.FilesActivity;
 import com.android.documentsui.filters.HugeLongTest;
 import com.android.documentsui.inspector.InspectorActivity;
@@ -59,14 +65,12 @@ import com.android.documentsui.rules.TestFilesRule;
 
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 
+import java.util.Locale;
 import java.util.UUID;
 
 @LargeTest
-@RunWith(AndroidJUnit4.class)
 public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
-
     @Rule
     public final OverrideFlagsRule mOverrideFlagsRule = new OverrideFlagsRule();
 
@@ -92,7 +96,7 @@ public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
     @Test
     @DisableFlags(FLAG_USE_MATERIAL3)
     public void testClickRecent() throws Exception {
-        bots.roots.openRoot("Recent");
+        switchRoot("Recent");
 
         boolean showSearchBar = context.getResources().getBoolean(R.bool.show_search_bar);
         if (showSearchBar) {
@@ -107,7 +111,7 @@ public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
     @Test
     @EnableFlags(FLAG_USE_MATERIAL3)
     public void testClickRecentM3() throws Exception {
-        bots.roots.openRoot("Recent");
+        switchRoot("Recent");
 
         bots.main.assertSearchBarGone();
         boolean showDockedSearch = context.getResources().getBoolean(
@@ -121,32 +125,17 @@ public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
     }
 
     private DocumentsProviderHelper setupStorageAuthorityDocsHelper() throws Exception {
-        // Create DocumentsProviderHelper to create files in Internal storage.
-        DocumentsProviderHelper storageDocsHelper =
-                new DocumentsProviderHelper(
-                        UserId.DEFAULT_USER, AUTHORITY_STORAGE, context, AUTHORITY_STORAGE);
-
-        RootInfo primaryRoot = storageDocsHelper.getRoot(ROOT_ID_DEVICE);
-
-        // Create Download folder if it doesn't exist.
-        DocumentInfo info = storageDocsHelper.findFile(primaryRoot.documentId, "Download");
-
-        if (info == null) {
-            ContentResolver cr = context.getContentResolver();
-            Uri uri = storageDocsHelper.createFolder(primaryRoot.documentId, "Download");
-            info = DocumentInfo.fromUri(cr, uri, UserId.DEFAULT_USER);
-        }
-
-        assertTrue(info != null && info.isDirectory());
-        return storageDocsHelper;
+        return DocumentsProviderHelper.setupStorageAuthorityDocsHelper(context);
     }
 
-    private void cleanupFile(String fileName, String primaryRootTitle)
-            throws UiObjectNotFoundException {
-        bots.roots.openRoot(primaryRootTitle);
-        bots.directory.openDocument("Download");
+    private void cleanupFile(String fileName, String primaryRootTitle,
+            @Nullable String parentDirName) throws UiObjectNotFoundException {
+        switchRoot(primaryRootTitle);
+        if (parentDirName != null) {
+            bots.directory.openDocument(parentDirName);
+        }
 
-        bots.directory.waitForDocument(fileName);
+        bots.directory.waitForDocument(fileName, /* withScroll= */ true);
         bots.directory.selectDocument(fileName, 1);
 
         bots.main.clickDelete();
@@ -160,7 +149,7 @@ public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
     @Test
     @DisableFlags(FLAG_USE_MATERIAL3)
     public void testRootClick_SetsWindowTitle() throws Exception {
-        bots.roots.openRoot("Images");
+        switchRoot("Images");
         bots.main.assertWindowTitle("Images");
     }
 
@@ -201,12 +190,11 @@ public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
     @Test
     public void testNavigate_inFixedLayout_whileHasSelection() throws Exception {
         if (bots.main.inFixedLayout()) {
-            bots.roots.openRoot(mTestFilesRule.getRoot(ROOT_0_ID).title);
-            device.waitForIdle();
+            switchRoot(mTestFilesRule.getRoot(ROOT_0_ID).title);
             bots.directory.selectDocument("file0.log", 1);
 
             // ensure no exception is thrown while navigating to a different root
-            bots.roots.openRoot(mTestFilesRule.getRoot(ROOT_1_ID).title);
+            switchRoot(mTestFilesRule.getRoot(ROOT_1_ID).title);
         }
     }
 
@@ -230,20 +218,20 @@ public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
         // switch to separate display modes for two separate roots. Each
         // mode has its own distinct sort header. This should be remembered
         // by files app.
-        bots.roots.openRoot("Images");
+        switchRoot("Images");
         bots.main.switchToGridMode();
-        bots.roots.openRoot("Videos");
+        switchRoot("Videos");
         bots.main.switchToListMode();
 
         // Now switch back and assert the correct mode sort header mode
         // is restored when we load the root with that display mode.
-        bots.roots.openRoot("Images");
+        switchRoot("Images");
         bots.sort.assertHeaderHide();
         if (bots.main.inFixedLayout()) {
-            bots.roots.openRoot("Videos");
+            switchRoot("Videos");
             bots.sort.assertHeaderShow();
         } else {
-            bots.roots.openRoot("Videos");
+            switchRoot("Videos");
             bots.sort.assertHeaderHide();
         }
     }
@@ -254,35 +242,35 @@ public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
         // Assign different view modes across "Images" and "Videos" roots.
         // Images root --> grid mode
         // Videos root --> list mode
-        bots.roots.openRoot("Images");
+        switchRoot("Images");
         bots.main.switchToGridMode();
         bots.main.assertInGridMode();
-        bots.roots.openRoot("Videos");
+        switchRoot("Videos");
         bots.main.switchToListMode();
         bots.main.assertInListMode();
 
         // Assert that the different roots maintain their respective view modes.
-        bots.roots.openRoot("Images");
+        switchRoot("Images");
         bots.main.assertInGridMode();
-        bots.roots.openRoot("Videos");
+        switchRoot("Videos");
         bots.main.assertInListMode();
     }
 
     @Test
     @EnableFlags(FLAG_USE_MATERIAL3)
     public void testRootChange_M3GlobalViewModeState() throws Exception {
-        bots.roots.openRoot("Recent");
+        switchRoot("Recent");
         bots.main.switchToGridMode();
         bots.main.assertInGridMode();
 
         // Switch to a different root and assert still in grid mode.
-        bots.roots.openRoot(ROOT_0_ID);
+        switchRoot(ROOT_0_ID);
         bots.main.assertInGridMode();
 
         // Switch back to list mode and assert still in list mode on a different root.
         bots.main.switchToListMode();
         bots.main.assertInListMode();
-        bots.roots.openRoot("Recent");
+        switchRoot("Recent");
         bots.main.assertInListMode();
     }
 
@@ -295,17 +283,17 @@ public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
         DocumentInfo info = storageDocsHelper.findFile(primaryRoot.documentId, "Download");
 
         // Create a file in "Download".
-        final String fileName = "recent_file.txt";
+        final String fileName = "recent_" + System.currentTimeMillis() + ".txt";
         storageDocsHelper.createDocument(info.documentId, "text/plain", fileName);
 
         // Navigate to "Download" and ensure the file exists (this should ensure it also exists in
         // Recent).
-        bots.roots.openRoot(primaryRoot.title);
+        switchRoot(primaryRoot.title);
         bots.directory.openDocument("Download");
-        bots.directory.waitForDocument(fileName);
+        bots.directory.waitForDocument(fileName, /* withScroll= */ true);
 
         // Open Recent and wait for the document to appear.
-        bots.roots.openRoot("Recent");
+        switchRoot("Recent");
         bots.directory.waitForDocument(fileName);
 
         try {
@@ -325,7 +313,7 @@ public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
             bots.directory.clearSelection();
             device.wait(Until.gone(By.desc("Share")), /* timeout= */ 5000);
         } finally {
-            cleanupFile(fileName, primaryRoot.title);
+            cleanupFile(fileName, primaryRoot.title, "Download");
         }
     }
 
@@ -338,6 +326,7 @@ public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
         try {
             DocumentInfo info = storageDocsHelper.findFile(primaryRoot.documentId, "Download");
             assertNotNull(info);
+            switchRoot("Downloads");
 
             // Create a zip file in "Download" folder. Since we are creating a file in the Download
             // folder, create a unique name that has little to no chance of colliding with actual
@@ -348,14 +337,14 @@ public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
 
             // Open Recent and wait for the newly created files to appear. We limit searches to just
             // this week to make the test run more efficiently.
-            bots.roots.openRoot("Recent");
+            switchRoot("Recent");
 
             // Verify that just created zip file appears among recent files. It should appear on top
             // so no scrolling.
             assertTrue(bots.directory.findDocument(createdFileName).exists());
         } finally {
             if (createdFileName != null) {
-                cleanupFile(createdFileName, primaryRoot.title);
+                cleanupFile(createdFileName, primaryRoot.title, "Download");
             }
         }
     }
@@ -382,6 +371,131 @@ public class FilesActivityUiTest extends ActivityTestJunit4<FilesActivity> {
             bots.directory.assertSelection(1);
         } else {
             bots.directory.assertNoSelection();
+        }
+    }
+
+    @Test
+    @EnableFlags(FLAG_USE_MATERIAL3)
+    public void testSetContainerPadding_gestureNav() {
+        mActivityScenario.onActivity(
+                activity -> {
+                    final int systemBarsBottom = 50;
+                    dispatchWindowInsets(activity, systemBarsBottom, 0);
+                    assertBottomPadding(activity, /* isGestureNav= */ true, systemBarsBottom);
+                });
+    }
+
+    @Test
+    @EnableFlags(FLAG_USE_MATERIAL3)
+    public void testSetContainerPadding_3ButtonNav() {
+        mActivityScenario.onActivity(
+                activity -> {
+                    final int systemBarsBottom = 100;
+                    dispatchWindowInsets(activity, systemBarsBottom, systemBarsBottom);
+                    assertBottomPadding(activity, /* isGestureNav= */ false, systemBarsBottom);
+                });
+    }
+
+    @Test
+    @EnableFlags({FLAG_USE_MATERIAL3, FLAG_HOME_SCREEN_FILES_RO})
+    public void testOnConfigurationChanged_LocaleResetsSelection() throws Exception {
+        final String[] frenchDownloads = new String[1];
+        device.waitForIdle();
+        bots.directory.selectDocument("file0.log", 1);
+        bots.directory.assertSelection(1);
+
+        mActivityScenario.onActivity(
+                activity -> {
+                    Configuration newConfig =
+                            new Configuration(activity.getResources().getConfiguration());
+                    newConfig.setLocale(Locale.FRENCH);
+
+                    // Create a new context with the new configuration to get the correct string
+                    Context frenchContext = activity.createConfigurationContext(newConfig);
+                    frenchDownloads[0] =
+                            frenchContext.getResources().getString(R.string.downloads_label);
+                    activity.onConfigurationChanged(newConfig);
+                });
+
+        // Wait for the UI to update after the async refresh. The most reliable
+        // signal is waiting for the root item with the new locale's text to appear.
+        device.wait(Until.hasObject(By.text(frenchDownloads[0])), TIMEOUT);
+        bots.directory.assertNoSelection(); // Selection should be cleared
+    }
+
+    @Test
+    @EnableFlags({FLAG_USE_MATERIAL3, FLAG_HOME_SCREEN_FILES_RO})
+    public void testConfigurationChange_ResizeAppPreservesSelection() throws Exception {
+        final String[] downloads = new String[1];
+        device.waitForIdle();
+        bots.directory.selectDocument("file0.log", 1);
+        bots.directory.assertSelection(1);
+
+        // This simulates a minor config change where the activity is not recreated,
+        // and only onConfigurationChanged is called.
+        mActivityScenario.onActivity(
+                activity -> {
+                    Configuration newConfig =
+                            new Configuration(activity.getResources().getConfiguration());
+                    newConfig.screenHeightDp += 10;
+                    activity.onConfigurationChanged(newConfig);
+                    downloads[0] = activity.getResources().getString(R.string.downloads_label);
+                });
+        device.wait(Until.hasObject(By.text(downloads[0])), TIMEOUT);
+        bots.directory.assertSelection(1); // Selection should be preserved
+    }
+
+    private void dispatchWindowInsets(
+            Activity activity, int systemBarsBottom, int tappableElementBottom) {
+        WindowInsetsCompat insets =
+                new WindowInsetsCompat.Builder()
+                        .setInsets(
+                                WindowInsetsCompat.Type.systemBars(),
+                                Insets.of(0, 0, 0, systemBarsBottom))
+                        .setInsets(
+                                WindowInsetsCompat.Type.navigationBars(),
+                                Insets.of(0, 0, 0, systemBarsBottom))
+                        .setInsets(
+                                WindowInsetsCompat.Type.tappableElement(),
+                                Insets.of(0, 0, 0, tappableElementBottom))
+                        .build();
+        ViewCompat.dispatchApplyWindowInsets(
+                activity.findViewById(getRes(R.id.coordinator_layout)), insets);
+    }
+
+    private void assertBottomPadding(
+            Activity activity, boolean isGestureNav, int systemBarsBottom) {
+        View root = activity.findViewById(getRes(R.id.coordinator_layout));
+        View pickerSaverContainer = activity.findViewById(getRes(R.id.container_save));
+        View drawerRootsList =
+                activity.findViewById(getRes(R.id.container_roots))
+                        .findViewById(getRes(R.id.roots_list));
+        assertNotNull(root);
+        assertNotNull(pickerSaverContainer);
+        assertNotNull(drawerRootsList);
+
+        // Verify root container's bottom padding.
+        assertEquals(0, root.getPaddingBottom());
+
+        // Verify picker/saver container's bottom padding.
+        int layoutPaddingBottom =
+                activity.getResources().getDimensionPixelSize(R.dimen.layout_padding_bottom);
+        int expectedBottomPaddingForPicker =
+                isGestureNav ? systemBarsBottom : systemBarsBottom + layoutPaddingBottom;
+        assertEquals(expectedBottomPaddingForPicker, pickerSaverContainer.getPaddingBottom());
+
+        // Verify navigation drawer and nav rail.
+        int drawerPaddingBottom =
+                activity.getResources().getDimensionPixelSize(R.dimen.drawer_padding_bottom);
+        int expectedBottomPaddingForNav =
+                isGestureNav ? systemBarsBottom : systemBarsBottom + drawerPaddingBottom;
+        assertEquals(expectedBottomPaddingForNav, drawerRootsList.getPaddingBottom());
+        if (bots.roots.inNavRailLayout()) {
+            View navRailContainer = activity.findViewById(getRes(R.id.nav_rail_container_roots));
+            assertNotNull(navRailContainer);
+            View navRailRootsList = navRailContainer.findViewById(R.id.roots_list);
+            assertNotNull(navRailRootsList);
+            assertEquals(expectedBottomPaddingForNav, navRailRootsList.getPaddingBottom());
         }
     }
 }

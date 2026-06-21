@@ -54,15 +54,16 @@ java_defaults {
     name: "documentsui_defaults",
 
     static_libs: [
-        "android.provider.flags-aconfig-java",
+        "android.content.flags-aconfig-java-export",
+        "android.provider.flags-aconfig-java-export",
         "androidx.appcompat_appcompat",
+        "androidx.fragment_fragment-ktx",
         "androidx.legacy_legacy-support-core-ui",
         "androidx.legacy_legacy-support-v13",
         "androidx.legacy_legacy-support-v4",
         "androidx.lifecycle_lifecycle-livedata-ktx",
         "androidx.lifecycle_lifecycle-viewmodel-ktx",
         "androidx.recyclerview_recyclerview",
-        "androidx.recyclerview_recyclerview-selection",
         "androidx.transition_transition",
         "android.multiuser.flags-aconfig-java",
         "apache-commons-compress",
@@ -82,7 +83,14 @@ java_defaults {
         // Exoplayer dependencies.
         "androidx.media3.media3-exoplayer",
         "androidx.media3.media3-ui",
-    ],
+    ] + select(release_flag("RELEASE_DOCUMENTSUI_RECYCLERVIEW_SELECTION_LOCAL_FORK"), {
+        true: [
+            "recyclerview_selection",
+        ],
+        default: [
+            "androidx.recyclerview_recyclerview-selection",
+        ],
+    }),
     plugins: [
         "glide-annotation-processor",
     ],

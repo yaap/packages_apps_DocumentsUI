@@ -50,14 +50,6 @@ flag {
 }
 
 flag {
-    name: "redirect_get_content_ro"
-    namespace: "documentsui"
-    description: "Redirects GET_CONTENT requests to Photopicker when appropriate"
-    bug: "377771195"
-    is_fixed_read_only: true
-}
-
-flag {
     name: "use_peek_preview_ro"
     namespace: "documentsui"
     description: "Enables the Peek previewing capability as a substitute for the Inspector."
@@ -96,3 +88,76 @@ flag {
     bug: "389814214"
     is_fixed_read_only: true
 }
+
+flag {
+ name: "use_file_summary"
+ namespace: "documentsui"
+ description: "Enables displaying the file summary for local files in the directory list."
+ bug: "436732697"
+ is_fixed_read_only: true
+}
+
+flag {
+    name: "use_local_search_provider"
+    namespace: "documentsui"
+    description: "Enables local search provider feature"
+    bug: "436732697"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "use_allfiles_root_for_recents"
+    namespace: "documentsui"
+    description: "Enables use of MediaDocumentProvider files_root for the Recents view"
+    bug: "444316005"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "cloud_features"
+    namespace: "documentsui"
+    description: "Enables features for the cloud storage root"
+    bug: "451775371"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "drags_from_other_apps"
+    namespace: "documentsui"
+    description: "Enables handling of system-level drag events from other apps."
+    bug: "440196110"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "use_approved_document_handler"
+    namespace: "documentsui"
+    description: "Enables approved document handler on DocumentsUI."
+    bug: "440464827"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "use_new_open_with"
+    namespace: "documentsui"
+    description: "Enables the new open-with flow that relies on implicit routing to ResolverActivity."
+    bug: "459640815"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "get_info_dialog"
+    namespace: "documentsui"
+    description: "Replaces the Inspector activity with a Get Info dialog"
+    bug: "458494432"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "include_remote_roots_in_recents"
+    namespace: "documentsui"
+    description: "Enables remote Roots such as cloud storage providers to show files in Recents"
+    bug: "447970143"
+    is_fixed_read_only: true
+}
+

@@ -28,14 +28,18 @@ import static org.mockito.Mockito.doReturn;
 import android.app.ActivityManager;
 import android.app.LoaderManager;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.IntentSender;
+import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.net.Uri;
+import android.os.Handler;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.test.mock.MockContentResolver;
@@ -59,6 +63,7 @@ import com.android.documentsui.testing.TestSupportLoaderManager;
 import org.mockito.Mockito;
 
 import java.util.List;
+import java.util.concurrent.Executor;
 
 /**
  * Abstract to avoid having to implement unnecessary Activity stuff.
@@ -77,7 +82,10 @@ public abstract class TestActivity extends AbstractBase {
     public FragmentManager fm;
     public ActivityManager activityManager;
     public UserManager userManager;
+    public LauncherApps launcherApps;
     public boolean throwOnStartActivity;
+    public Executor mainExecutor;
+    public Injector<?> injector;
 
     public TestEventListener<Intent> startActivity;
     public TestEventListener<Pair<Intent, UserHandle>> startActivityAsUser;
@@ -101,10 +109,12 @@ public abstract class TestActivity extends AbstractBase {
 
     public void init(TestEnv env) {
         resources = TestResources.create();
+        injector = env.injector;
         packageMgr = TestPackageManager.create();
         intent = new Intent();
         currentUserHandle = env.userHandle;
         fm = Mockito.mock(FragmentManager.class, Mockito.CALLS_REAL_METHODS);
+        mainExecutor = env.mMainExecutor;
 
         startActivity = new TestEventListener<>();
         startActivityAsUser = new TestEventListener<>();
@@ -119,6 +129,7 @@ public abstract class TestActivity extends AbstractBase {
         setRootsDrawerLocked = new TestEventListener<>();
         notifyDirectoryNavigated = new TestEventListener<>();
         contentResolver = env.contentResolver;
+        launcherApps = Mockito.mock(LauncherApps.class);
         loaderManager = new TestLoaderManager();
         supportLoaderManager = new TestSupportLoaderManager();
         finishedHandler = new TestEventHandler<>();
@@ -289,6 +300,8 @@ public abstract class TestActivity extends AbstractBase {
                 return activityManager;
             case Context.USER_SERVICE:
                 return userManager;
+            case Context.LAUNCHER_APPS_SERVICE:
+                return launcherApps;
         }
 
         throw new IllegalArgumentException("Unknown service " + service);
@@ -298,6 +311,8 @@ public abstract class TestActivity extends AbstractBase {
     public final String getSystemServiceName(Class<?> serviceName) {
         if (serviceName == UserManager.class) {
             return Context.USER_SERVICE;
+        } else if (serviceName == LauncherApps.class) {
+            return Context.LAUNCHER_APPS_SERVICE;
         }
         throw new IllegalArgumentException("Unknown service name " + serviceName);
     }
@@ -317,6 +332,28 @@ public abstract class TestActivity extends AbstractBase {
             return false;
         }
     }
+
+    @Override
+    public final Executor getMainExecutor() {
+        return mainExecutor;
+    }
+
+    @Override
+    public Intent registerReceiver(BroadcastReceiver receiver, IntentFilter filter) {
+        return null;
+    }
+
+    @Override
+    public Intent registerReceiverForAllUsers(
+            BroadcastReceiver receiver,
+            IntentFilter filter,
+            String broadcastPermission,
+            Handler scheduler) {
+        return null;
+    }
+
+    @Override
+    public void unregisterReceiver(BroadcastReceiver receiver) {}
 }
 
 // Trick Mockito into finding our Addons methods correctly. W/o this

@@ -16,12 +16,17 @@
 
 package com.android.documentsui.dirlist;
 
+import static android.provider.Flags.FLAG_ENABLE_DOCUMENTS_TRASH_API;
+import static android.provider.Flags.FLAG_ENABLE_SYNC_STATE;
+
 import static com.android.documentsui.DevicePolicyResources.Drawables.Style.OUTLINE;
 import static com.android.documentsui.DevicePolicyResources.Drawables.WORK_PROFILE_OFF_ICON;
 import static com.android.documentsui.DevicePolicyResources.Strings.CANT_SELECT_WORK_FILES_MESSAGE;
 import static com.android.documentsui.DevicePolicyResources.Strings.CANT_SELECT_WORK_FILES_TITLE;
 import static com.android.documentsui.DevicePolicyResources.Strings.WORK_PROFILE_OFF_ENABLE_BUTTON;
 import static com.android.documentsui.DevicePolicyResources.Strings.WORK_PROFILE_OFF_ERROR_TITLE;
+import static com.android.documentsui.flags.Flags.FLAG_USE_MATERIAL3;
+import static com.android.documentsui.flags.Flags.FLAG_USE_SEARCH_V2_READ_ONLY;
 import static com.android.documentsui.testing.DrawableAsserts.assertDrawablesEqual;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
@@ -29,6 +34,9 @@ import static com.android.documentsui.util.Material3Config.getRes;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.TruthJUnit.assume;
 
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -39,11 +47,18 @@ import android.app.admin.DevicePolicyResourcesManager;
 import android.content.Context;
 import android.content.pm.UserProperties;
 import android.graphics.drawable.Drawable;
+import android.os.Build;
 import android.os.UserHandle;
 import android.os.UserManager;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
+import android.platform.test.annotations.RequiresFlagsEnabled;
+import android.platform.test.flag.junit.CheckFlagsRule;
+import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.util.Log;
 
 import androidx.core.util.Preconditions;
+import androidx.test.filters.SdkSuppress;
 import androidx.test.filters.SmallTest;
 import androidx.test.platform.app.InstrumentationRegistry;
 
@@ -54,6 +69,8 @@ import com.android.documentsui.R;
 import com.android.documentsui.TestConfigStore;
 import com.android.documentsui.base.State;
 import com.android.documentsui.base.UserId;
+import com.android.documentsui.flags.Flags;
+import com.android.documentsui.rules.OverrideFlagsRule;
 import com.android.documentsui.testing.TestActionHandler;
 import com.android.documentsui.testing.TestEnv;
 import com.android.documentsui.testing.TestModel;
@@ -63,7 +80,9 @@ import com.android.modules.utils.build.SdkLevel;
 
 import com.google.common.collect.Lists;
 
+import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -80,6 +99,7 @@ public final class MessageTest {
 
     private UserId mUserId = UserId.of(100);
     private Message mInflateMessage;
+    private Message mHeaderMessage;
     private Context mContext;
     private Runnable mDefaultCallback = () -> {
     };
@@ -88,6 +108,11 @@ public final class MessageTest {
     private TestActionHandler mTestActionHandler;
     private final TestConfigStore mTestConfigStore = new TestConfigStore();
     private DocumentsAdapter.Environment mEnv;
+
+    @Rule public final OverrideFlagsRule mOverrideFlagsRule = new OverrideFlagsRule();
+
+    @Rule
+    public final CheckFlagsRule mCheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule();
 
     @Parameter(0)
     public boolean isPrivateSpaceEnabled;
@@ -139,6 +164,7 @@ public final class MessageTest {
         } else {
             mInflateMessage = new Message.InflateMessage(mEnv, mDefaultCallback, mTestConfigStore);
         }
+        mHeaderMessage = new Message.HeaderMessage(mEnv, mDefaultCallback, mTestConfigStore);
     }
 
     @Test
@@ -264,6 +290,31 @@ public final class MessageTest {
     }
 
     @Test
+    @EnableFlags({FLAG_USE_SEARCH_V2_READ_ONLY, FLAG_USE_MATERIAL3})
+    public void testInflateMessage_noEmptyMessageWhileLoading() {
+        // Set model to empty.
+        ((TestModel) mEnv.getModel()).clearIds();
+        // Make sure we have a root doc for title access.
+        mEnv.getDisplayState().stack.changeRoot(TestProvidersAccess.HOME);
+        // Turn off search mode.
+        ((TestEnvironment) mEnv).setInSearchMode(false);
+
+        // set model to loading state
+        mEnv.getModel().setLoading(true);
+        mInflateMessage.update(Model.Update.UPDATE);
+        assertNull(mInflateMessage.getMessageString());
+        assertNull(mInflateMessage.getIcon());
+
+        // update model state to indicate loading has finished
+        mEnv.getModel().setLoading(false);
+        mInflateMessage.update(Model.Update.UPDATE);
+        Drawable expectedDrawable = mContext.getDrawable(getRes(R.drawable.empty));
+        assertDrawablesEqual(mInflateMessage.getIcon(), expectedDrawable);
+        assertThat(mInflateMessage.getMessageString().toString())
+                .isEqualTo(mContext.getString(R.string.empty));
+    }
+
+    @Test
     public void testInflateMessage_updateToEmptyMessage() {
         // Set model to empty.
         ((TestModel) mEnv.getModel()).clearIds();
@@ -276,6 +327,8 @@ public final class MessageTest {
 
         Drawable expectedDrawable = mContext.getDrawable(getRes(R.drawable.empty));
         assertDrawablesEqual(mInflateMessage.getIcon(), expectedDrawable);
+        assertThat(mInflateMessage.getMessageString().toString())
+                .isEqualTo(mContext.getString(R.string.empty));
     }
 
     @Test
@@ -296,5 +349,95 @@ public final class MessageTest {
             expectedDrawable = mContext.getDrawable(R.drawable.empty);
         }
         assertDrawablesEqual(mInflateMessage.getIcon(), expectedDrawable);
+    }
+
+    @Test
+    @RequiresFlagsEnabled({FLAG_ENABLE_DOCUMENTS_TRASH_API})
+    @EnableFlags({Flags.FLAG_USE_MATERIAL3, Flags.FLAG_ENABLE_TRASH_FLOW_RO})
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    public void testInflateMessage_updateToEmptyMessage_InTrashPage() {
+        // Set model to empty.
+        ((TestModel) mEnv.getModel()).clearIds();
+        // Set is on trash page.
+        ((TestEnvironment) mEnv).setIsOnTrashPage(true);
+
+        mInflateMessage.update(Model.Update.UPDATE);
+
+        final Drawable expectedDrawable;
+        if (isUseMaterial3FlagEnabled()) {
+            expectedDrawable = mContext.getDrawable(R.drawable.ic_empty_trash);
+        } else {
+            expectedDrawable = mContext.getDrawable(R.drawable.empty);
+        }
+        assertDrawablesEqual(mInflateMessage.getIcon(), expectedDrawable);
+        Assert.assertNotNull(mInflateMessage.getMessageString());
+        assertThat(mInflateMessage.getMessageString().toString())
+                .isEqualTo(mContext.getString(R.string.trash_page_empty_title));
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @EnableFlags({Flags.FLAG_CLOUD_FEATURES, Flags.FLAG_USE_MATERIAL3})
+    public void testHeaderMessage_offlineAndLimitedWhenOffline_showsOfflineBanner() {
+        // Set offline.
+        ((TestEnvironment) mEnv).setIsOnline(false);
+        ((TestModel) mEnv.getModel()).setHasLimitedFunctionalityWhenOffline(true);
+
+        mHeaderMessage.update(new Model.Update(null, false));
+
+        assertTrue(mHeaderMessage.shouldShow());
+        assertThat(mHeaderMessage.getMessageString().toString())
+                .isEqualTo(mContext.getString(getRes(R.string.you_are_offline_banner_message)));
+        assertThat(mHeaderMessage.getButtonString().toString())
+                .isEqualTo(mContext.getString(getRes(R.string.button_dismiss)));
+        if (isUseMaterial3FlagEnabled()) {
+            assertDrawablesEqual(
+                    mHeaderMessage.getIcon(), mContext.getDrawable(R.drawable.ic_wifi_off_m3));
+        } else {
+            assertNull(mHeaderMessage.getIcon());
+        }
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @DisableFlags(Flags.FLAG_CLOUD_FEATURES)
+    public void testHeaderMessage_flagDisabled_doesNotShowOfflineBanner() {
+        // Set offline.
+        ((TestEnvironment) mEnv).setIsOnline(false);
+        ((TestModel) mEnv.getModel()).setHasLimitedFunctionalityWhenOffline(true);
+
+        mHeaderMessage.update(new Model.Update(null, false));
+
+        assertFalse(mHeaderMessage.shouldShow());
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @EnableFlags({Flags.FLAG_CLOUD_FEATURES, Flags.FLAG_USE_MATERIAL3})
+    public void testHeaderMessage_onlineAndLimitedWhenOffline_doesNotShowBanner() {
+        // Set online.
+        ((TestEnvironment) mEnv).setIsOnline(true);
+        ((TestModel) mEnv.getModel()).setHasLimitedFunctionalityWhenOffline(true);
+
+        mHeaderMessage.update(new Model.Update(null, false));
+
+        assertFalse(mHeaderMessage.shouldShow());
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @EnableFlags({Flags.FLAG_CLOUD_FEATURES, Flags.FLAG_USE_MATERIAL3})
+    public void testHeaderMessage_offlineAndNotLimitedWhenOffline_doesNotShowBanner() {
+        // Set offline.
+        ((TestEnvironment) mEnv).setIsOnline(false);
+        ((TestModel) mEnv.getModel()).setHasLimitedFunctionalityWhenOffline(false);
+
+        mHeaderMessage.update(new Model.Update(null, false));
+
+        assertFalse(mHeaderMessage.shouldShow());
     }
 }

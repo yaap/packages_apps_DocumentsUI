@@ -16,6 +16,8 @@
 
 package com.android.documentsui.dirlist;
 
+import static com.android.documentsui.util.FlagUtils.isSyncStateEnabled;
+import static com.android.documentsui.util.FlagUtils.isTrashFlowEnabled;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 
 import android.os.UserManager;
@@ -29,6 +31,7 @@ import com.android.documentsui.ConfigStore;
 import com.android.documentsui.Model;
 import com.android.documentsui.Model.Update;
 import com.android.documentsui.base.EventListener;
+import com.android.documentsui.base.NetworkMonitor;
 import com.android.documentsui.base.State;
 import com.android.documentsui.base.UserId;
 import com.android.documentsui.dirlist.Message.HeaderMessage;
@@ -43,11 +46,15 @@ import java.util.Map;
  */
 final class DirectoryAddonsAdapter extends DocumentsAdapter {
 
+    private static final int HEADER_MESSAGE_POSITION = 0;
+
     private static final String TAG = "SectioningDocumentsAdapterWrapper";
 
     private final Environment mEnv;
     private final DocumentsAdapter mDelegate;
     private final EventListener<Update> mModelUpdateListener;
+
+    private NetworkMonitor.NetworkListener mNetworkListener;
 
     private int mBreakPosition = -1;
     // TODO: There should be two header messages (or more here). Defaulting to showing only one for
@@ -70,7 +77,15 @@ final class DirectoryAddonsAdapter extends DocumentsAdapter {
         mConfigStore = configStore;
         // TODO: We should not instantiate the messages here, but rather instantiate them
         // when we get an update event.
-        mHeaderMessage = new HeaderMessage(environment, this::onDismissHeaderMessage, mConfigStore);
+        // Only show the empty trash banner when on the trash page.
+        if (isTrashFlowEnabled() && isUseMaterial3FlagEnabled() && environment.isOnTrashPage()) {
+            mHeaderMessage =
+                    new HeaderMessage(
+                            environment, this::showEmptyTrashConfirmationDialog, mConfigStore);
+        } else {
+            mHeaderMessage =
+                    new HeaderMessage(environment, this::onDismissHeaderMessage, mConfigStore);
+        }
         if (mConfigStore.isPrivateSpaceInDocsUIEnabled()) {
             mInflateMessage = new InflateMessage(environment, this::onDismissHeaderMessage,
                     sourceUserId, selectedUserId, userIdLabelMap, userManager, mConfigStore);
@@ -84,11 +99,22 @@ final class DirectoryAddonsAdapter extends DocumentsAdapter {
         mDelegate.registerAdapterDataObserver(new EventRelay());
 
         mModelUpdateListener = this::onModelUpdate;
+        mNetworkListener = this::onNetworkStateChanged;
     }
 
     @Override
     EventListener<Update> getModelUpdateListener() {
         return mModelUpdateListener;
+    }
+
+    @Override
+    NetworkMonitor.NetworkListener getNetworkListener() {
+        return mNetworkListener;
+    }
+
+    @Override
+    public void onSummariesUpdated(List<Integer> updatedIndices) {
+        mDelegate.onSummariesUpdated(updatedIndices);
     }
 
     @Override
@@ -137,6 +163,10 @@ final class DirectoryAddonsAdapter extends DocumentsAdapter {
                 holder = mDelegate.createViewHolder(parent, viewType);
         }
         return holder;
+    }
+
+    private void showEmptyTrashConfirmationDialog() {
+        mEnv.getActionHandler().showEmptyTrashConfirmationDialog();
     }
 
     private void onDismissHeaderMessage() {
@@ -233,9 +263,27 @@ final class DirectoryAddonsAdapter extends DocumentsAdapter {
         }
     }
 
+    private void onNetworkStateChanged(Boolean isOnline) {
+        if (!isSyncStateEnabled()) {
+            return;
+        }
+        // Network state change only updates UI for directory lists that contain files on roots
+        // that have limited functionality when offline.
+        if (!mEnv.getModel().hasLimitedFunctionalityWhenOffline()) {
+            return;
+        }
+        boolean shouldShowBefore = mHeaderMessage.shouldShow();
+        mHeaderMessage.update(new Update(null, false));
+        boolean shouldShowAfter = mHeaderMessage.shouldShow();
+        if (shouldShowBefore != shouldShowAfter) {
+            // Trigger re-layout for header.
+            notifyDataSetChanged();
+        }
+    }
+
     @Override
     public int getItemViewType(int p) {
-        if (p == 0 && mHeaderMessage.shouldShow()) {
+        if (p == HEADER_MESSAGE_POSITION && mHeaderMessage.shouldShow()) {
             return ITEM_TYPE_HEADER_MESSAGE;
         }
 

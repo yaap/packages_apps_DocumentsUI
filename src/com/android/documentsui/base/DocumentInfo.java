@@ -18,6 +18,7 @@ package com.android.documentsui.base;
 
 import static com.android.documentsui.base.SharedMinimal.DEBUG;
 import static com.android.documentsui.base.SharedMinimal.redact;
+import static com.android.documentsui.util.FlagUtils.isSyncStateEnabled;
 import static com.android.documentsui.util.FlagUtils.isTrashFlowEnabled;
 
 import android.content.ContentProviderClient;
@@ -58,6 +59,8 @@ public class DocumentInfo implements Durable, Parcelable {
     private static final int VERSION_INIT = 1;
     private static final int VERSION_SPLIT_URI = 2;
     private static final int VERSION_USER_ID = 3;
+    // Guarded by isSyncStateEnabled().
+    private static final int VERSION_HAS_LIMITED_FUNCTIONALITY = 4;
 
     public UserId userId;
     public String authority;
@@ -69,6 +72,8 @@ public class DocumentInfo implements Durable, Parcelable {
     public String summary;
     public long size;
     public int icon;
+    public Integer syncStateFlags;
+    public boolean rootHasLimitedFunctionalityWhenOffline;
 
     /** Derived fields that aren't persisted */
     public Uri derivedUri;
@@ -90,12 +95,18 @@ public class DocumentInfo implements Durable, Parcelable {
         size = -1;
         icon = 0;
         derivedUri = null;
+        syncStateFlags = null;
+        rootHasLimitedFunctionalityWhenOffline = false;
     }
 
     @Override
     public void read(DataInputStream in) throws IOException {
         final int version = in.readInt();
         switch (version) {
+            case VERSION_HAS_LIMITED_FUNCTIONALITY:
+                if (isSyncStateEnabled()) {
+                    rootHasLimitedFunctionalityWhenOffline = in.readBoolean();
+                }
             case VERSION_USER_ID:
                 userId = UserId.read(in);
             case VERSION_SPLIT_URI:
@@ -111,6 +122,7 @@ public class DocumentInfo implements Durable, Parcelable {
                 summary = DurableUtils.readNullableString(in);
                 size = in.readLong();
                 icon = in.readInt();
+                syncStateFlags = DurableUtils.readNullableInteger(in);
                 deriveFields();
                 break;
             case VERSION_INIT:
@@ -122,7 +134,12 @@ public class DocumentInfo implements Durable, Parcelable {
 
     @Override
     public void write(DataOutputStream out) throws IOException {
-        out.writeInt(VERSION_USER_ID);
+        if (isSyncStateEnabled()) {
+            out.writeInt(VERSION_HAS_LIMITED_FUNCTIONALITY);
+            out.writeBoolean(rootHasLimitedFunctionalityWhenOffline);
+        } else {
+            out.writeInt(VERSION_USER_ID);
+        }
         UserId.write(out, userId);
         DurableUtils.writeNullableString(out, authority);
         DurableUtils.writeNullableString(out, documentId);
@@ -133,6 +150,7 @@ public class DocumentInfo implements Durable, Parcelable {
         DurableUtils.writeNullableString(out, summary);
         out.writeLong(size);
         out.writeInt(icon);
+        DurableUtils.writeNullableInteger(out, syncStateFlags);
     }
 
     @Override
@@ -185,6 +203,19 @@ public class DocumentInfo implements Durable, Parcelable {
         this.summary = getCursorString(cursor, Document.COLUMN_SUMMARY);
         this.size = getCursorLong(cursor, Document.COLUMN_SIZE);
         this.icon = getCursorInt(cursor, Document.COLUMN_ICON);
+        if (isSyncStateEnabled()) {
+            this.syncStateFlags =
+                    getCursorInteger(
+                            cursor,
+                            Document.COLUMN_CONTENT_SYNC_STATE_FLAGS,
+                            /* returnIfMissingOrNull= */ null);
+            // Get custom COLUMN_LIMITED_FUNCTIONALITY_WHEN_OFFLINE boolean from RootCursorWrapper.
+            this.rootHasLimitedFunctionalityWhenOffline =
+                    getCursorInt(
+                                    cursor,
+                                    RootCursorWrapper.COLUMN_LIMITED_FUNCTIONALITY_WHEN_OFFLINE)
+                            != 0;
+        }
         this.deriveFields();
     }
 
@@ -235,24 +266,44 @@ public class DocumentInfo implements Durable, Parcelable {
     @Override
     public String toString() {
         return "DocumentInfo{"
-                + "docId=" + documentId
-                + ", userId=" + userId
-                + ", displayName=" + displayName
-                + ", mimeType=" + mimeType
-                + ", isContainer=" + isContainer()
-                + ", isDirectory=" + isDirectory()
-                + ", isArchive=" + isArchive()
-                + ", isInArchive=" + isInArchive()
-                + ", isPartial=" + isPartial()
-                + ", isVirtual=" + isVirtual()
-                + ", isDeleteSupported=" + isDeleteSupported()
-                + ", isTrashSupported=" + isTrashSupported()
-                + ", isRestoreSupported=" + isRestoreSupported()
-                + ", isCreateSupported=" + isCreateSupported()
-                + ", isMoveSupported=" + isMoveSupported()
-                + ", isRenameSupported=" + isRenameSupported()
-                + ", isMetadataSupported=" + isMetadataSupported()
-                + ", isBlockedFromTree=" + isBlockedFromTree()
+                + "docId="
+                + documentId
+                + ", userId="
+                + userId
+                + ", displayName="
+                + displayName
+                + ", mimeType="
+                + mimeType
+                + ", isContainer="
+                + isContainer()
+                + ", isDirectory="
+                + isDirectory()
+                + ", isArchive="
+                + isArchive()
+                + ", isInArchive="
+                + isInArchive()
+                + ", isPartial="
+                + isPartial()
+                + ", isVirtual="
+                + isVirtual()
+                + ", isDeleteSupported="
+                + isDeleteSupported()
+                + ", isTrashSupported="
+                + isTrashSupported()
+                + ", isRestoreSupported="
+                + isRestoreSupported()
+                + ", isCreateSupported="
+                + isCreateSupported()
+                + ", isMoveSupported="
+                + isMoveSupported()
+                + ", isRenameSupported="
+                + isRenameSupported()
+                + ", isMetadataSupported="
+                + isMetadataSupported()
+                + ", isBlockedFromTree="
+                + isBlockedFromTree()
+                + ", rootHasLimitedFunctionalityWhenOffline="
+                + rootHasLimitedFunctionalityWhenOffline
                 + "} @ "
                 + derivedUri;
     }
@@ -350,6 +401,73 @@ public class DocumentInfo implements Durable, Parcelable {
         return (flags & Document.FLAG_VIRTUAL_DOCUMENT) != 0;
     }
 
+    /** Whether the `syncStateFlags` field is set. */
+    public boolean hasSyncState() {
+        return syncStateFlags != null;
+    }
+
+    /**
+     * Whether the `syncStateFlags` includes the upload in progress flag. Returns false if there is
+     * no sync state.
+     */
+    public boolean hasUploadInProgress() {
+        if (!isSyncStateEnabled() || !hasSyncState()) {
+            return false;
+        }
+        return (Document.SYNC_STATE_FLAG_UPLOAD_PROGRESS & syncStateFlags) != 0;
+    }
+
+    /**
+     * Whether the `syncStateFlags` includes the download in progress flag. Returns false if there
+     * is no sync state.
+     */
+    public boolean hasDownloadInProgress() {
+        if (!isSyncStateEnabled() || !hasSyncState()) {
+            return false;
+        }
+        return (Document.SYNC_STATE_FLAG_DOWNLOAD_PROGRESS & syncStateFlags) != 0;
+    }
+
+    /**
+     * Whether the `syncStateFlags` includes an error flag. Returns false if there is no sync state.
+     */
+    public boolean hasSyncError() {
+        if (!isSyncStateEnabled() || !hasSyncState()) {
+            return false;
+        }
+        if ((Document.SYNC_STATE_FLAG_UPLOAD_ERROR & syncStateFlags) != 0) {
+            return true;
+        }
+        return (Document.SYNC_STATE_FLAG_DOWNLOAD_ERROR & syncStateFlags) != 0;
+    }
+
+    /**
+     * Whether the `syncStateFlags` includes the local changes flag. Returns false if there is no
+     * sync state.
+     */
+    public boolean hasLocalChanges() {
+        if (!isSyncStateEnabled() || !hasSyncState()) {
+            return false;
+        }
+        return (Document.SYNC_STATE_FLAG_LOCAL_CHANGES & syncStateFlags) != 0;
+    }
+
+    /**
+     * Whether the `syncStateFlags` includes the available locally flag. Default to true if there is
+     * no sync state or the file is virtual
+     */
+    public boolean isContentAvailableLocally() {
+        if (!isSyncStateEnabled() || !hasSyncState()) {
+            // When the sync state is not set, default to available.
+            return true;
+        }
+        if (isVirtual()) {
+            // Virtual files don't have content stored locally so default to available.
+            return true;
+        }
+        return (Document.SYNC_STATE_FLAG_AVAILABLE_LOCALLY & syncStateFlags) != 0;
+    }
+
     public boolean prefersSortByLastModified() {
         return (flags & Document.FLAG_DIR_PREFERS_LAST_MODIFIED) != 0;
     }
@@ -432,26 +550,34 @@ public class DocumentInfo implements Durable, Parcelable {
 
     /**
      * Gets the int at the column with {@code columnName} on the {@code cursor}. Returns 0 if the
-     * cursor is null or the column is missing.
+     * cursor is null, the column is missing or the value is null.
      */
     public static int getCursorInt(Cursor cursor, String columnName) {
-        return getCursorInt(cursor, columnName, 0);
+        return getCursorInteger(cursor, columnName, 0);
     }
 
     /**
-     * Gets the int at the column with {@code columnName} on the {@code cursor}. Returns
-     * {@code returnIfMissingOrNull} if the cursor is null or the column is missing.
+     * Gets the int at the column with {@code columnName} on the {@code cursor}. Returns {@code
+     * returnIfMissingOrNull} if the cursor is null, the column is missing or the value is null.
      *
-     * @param returnIfMissingOrNull The value to return if the cursor is null or the column is
-     *                              missing.
+     * @param returnIfMissingOrNull The value to return if the cursor is null, the column is missing
+     *     or the value is null.
      */
-    public static int getCursorInt(Cursor cursor, String columnName, int returnIfMissingOrNull) {
+    public static Integer getCursorInteger(
+            Cursor cursor, String columnName, Integer returnIfMissingOrNull) {
         if (cursor == null) {
             return returnIfMissingOrNull;
         }
 
         final int index = cursor.getColumnIndex(columnName);
-        return (index != -1) ? cursor.getInt(index) : returnIfMissingOrNull;
+        if (index == -1) {
+            return returnIfMissingOrNull;
+        }
+        if (cursor.isNull(index)) {
+            // This check is required because getInt returns 0 for null ints.
+            return returnIfMissingOrNull;
+        }
+        return Integer.valueOf(cursor.getInt(index));
     }
 
     public static FileNotFoundException asFileNotFoundException(Throwable t)

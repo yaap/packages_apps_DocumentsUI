@@ -19,7 +19,6 @@ package com.android.documentsui.dirlist;
 import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.content.Context;
-import android.database.Cursor;
 import android.text.TextUtils;
 import android.view.View;
 import android.view.ViewGroup;
@@ -27,8 +26,11 @@ import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import androidx.annotation.Nullable;
+
 import com.android.documentsui.ConfigStore;
 import com.android.documentsui.R;
+import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.util.VersionUtils;
 
 /**
@@ -73,11 +75,12 @@ final class InflateMessageDocumentHolder extends MessageHolder {
 
     public void bind(Message message) {
         mMessage = message;
-        bind(null, null);
+        bind(null, null, null, false);
     }
 
     @Override
-    public void bind(Cursor cursor, String modelId) {
+    public void bind(
+            DocumentInfo doc, String modelId, @Nullable String summary, boolean justFinishedSync) {
         if (mMessage.getLayout() == LAYOUT_CROSS_PROFILE_ERROR) {
             bindCrossProfileMessageView();
         } else {

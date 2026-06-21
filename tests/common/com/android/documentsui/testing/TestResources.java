@@ -41,6 +41,7 @@ public abstract class TestResources extends Resources {
     public SparseBooleanArray bools;
     public SparseArray<String> strings;
     public SparseArray<String> plurals;
+    public SparseArray<String[]> stringArrays;
 
     public TestResources() {
         super(ClassLoader.getSystemClassLoader());
@@ -52,6 +53,7 @@ public abstract class TestResources extends Resources {
         res.bools = new SparseBooleanArray();
         res.strings = new SparseArray<>();
         res.plurals = new SparseArray<>();
+        res.stringArrays = new SparseArray<>();
 
         // quick view package can be set via system property on debug builds.
         // unfortunately that interfers with testing. For that reason we have
@@ -70,6 +72,11 @@ public abstract class TestResources extends Resources {
         strings.put(R.string.default_root_uri, uri);
     }
 
+    /** Sets local search provider URI */
+    public void setLocalSearchProvider(String rootUri) {
+        strings.put(R.string.local_search_provider, rootUri);
+    }
+
     @Override
     public final boolean getBoolean(@BoolRes int id) throws NotFoundException {
         return bools.get(id);
@@ -78,6 +85,15 @@ public abstract class TestResources extends Resources {
     @Override
     public final @Nullable String getString(@StringRes int id) throws NotFoundException {
         return strings.get(id);
+    }
+
+    @NonNull
+    @Override
+    public final String[] getStringArray(int id) throws NotFoundException {
+        if (stringArrays.contains(id)) {
+            return stringArrays.get(id);
+        }
+        return new String[] {};
     }
 
     @Override

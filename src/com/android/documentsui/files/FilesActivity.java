@@ -16,11 +16,12 @@
 
 package com.android.documentsui.files;
 
+import static android.view.KeyEvent.KEYCODE_REFRESH;
+
 import static com.android.documentsui.OperationDialogFragment.DIALOG_TYPE_UNKNOWN;
 import static com.android.documentsui.base.SharedMinimal.DEBUG;
-import static com.android.documentsui.flags.Flags.usePeekPreviewRo;
+import static com.android.documentsui.util.FlagUtils.isUseApprovedDocumentHandlerEnabled;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
-import static com.android.documentsui.util.FlagUtils.isUsePeekPreviewFlagEnabled;
 import static com.android.documentsui.util.FlagUtils.isVisualSignalsFlagEnabled;
 import static com.android.documentsui.util.FlagUtils.isZipNgFlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
@@ -42,7 +43,10 @@ import android.view.View;
 import androidx.annotation.CallSuper;
 import androidx.annotation.RequiresApi;
 import androidx.fragment.app.FragmentManager;
+import androidx.lifecycle.LifecycleOwnerKt;
+import androidx.lifecycle.ViewModel;
 import androidx.lifecycle.ViewModelProvider;
+import androidx.recyclerview.selection.Selection;
 
 import com.android.documentsui.AbstractActionHandler;
 import com.android.documentsui.ActionModeController;
@@ -54,6 +58,7 @@ import com.android.documentsui.Injector;
 import com.android.documentsui.JobPanelController;
 import com.android.documentsui.JobPanelViewModel;
 import com.android.documentsui.MenuManager.DirectoryDetails;
+import com.android.documentsui.ModelId;
 import com.android.documentsui.OperationDialogFragment;
 import com.android.documentsui.OperationDialogFragment.DialogType;
 import com.android.documentsui.ProfileTabsAddons;
@@ -65,6 +70,8 @@ import com.android.documentsui.SharedInputHandler;
 import com.android.documentsui.ShortcutsUpdater;
 import com.android.documentsui.StubProfileTabsAddons;
 import com.android.documentsui.UserManagerProvider;
+import com.android.documentsui.approveddochandlers.ApprovedDocHandlers;
+import com.android.documentsui.approveddochandlers.ApprovedDocMenuController;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.Features;
 import com.android.documentsui.base.RootInfo;
@@ -74,17 +81,16 @@ import com.android.documentsui.clipping.DocumentClipper;
 import com.android.documentsui.dirlist.AnimationView.AnimationType;
 import com.android.documentsui.dirlist.AppsRowManager;
 import com.android.documentsui.dirlist.DirectoryFragment;
-import com.android.documentsui.peek.PeekViewManager;
-import com.android.documentsui.peek.PeekViewModel;
 import com.android.documentsui.services.FileOperationService;
 import com.android.documentsui.sidebar.RootsFragment;
 import com.android.documentsui.ui.DialogController;
 import com.android.documentsui.ui.MessageBuilder;
+import com.android.documentsui.util.VersionUtils;
+
+import kotlinx.coroutines.Dispatchers;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import javax.annotation.Nullable;
 
 /**
  * Standalone file management activity.
@@ -97,7 +103,6 @@ public class FilesActivity extends BaseActivity implements AbstractActionHandler
     private Injector<ActionHandler<FilesActivity>> mInjector;
     private ActivityInputHandler mActivityInputHandler;
     private SharedInputHandler mSharedInputHandler;
-    private @Nullable PeekViewManager mPeekViewManager;
     private final ProfileTabsAddons mProfileTabsAddonsStub = new StubProfileTabsAddons();
 
     public FilesActivity() {
@@ -136,11 +141,41 @@ public class FilesActivity extends BaseActivity implements AbstractActionHandler
                         return DocumentsApplication.getUserManagerState(context).getUserIds();
                     }
                 });
-
+        initInjector();
         super.onCreate(icicle);
+
+        if (mInjector.getSummaryProviderManager() != null
+                && mInjector.getSummaryProviderManager().shouldShowStartupConsent()) {
+            mInjector.getSummaryProviderManager().showStartupConsent(getSupportFragmentManager());
+        }
 
         DocumentClipper clipper = DocumentsApplication.getDocumentClipper(this);
         mInjector.selectionMgr = DocsSelectionHelper.create();
+
+        ApprovedDocHandlers approvedDocHandlers = null;
+        ApprovedDocMenuController approvedDocMenuController = null;
+        if (isUseApprovedDocumentHandlerEnabled()) {
+            approvedDocHandlers =
+                    new ViewModelProvider(
+                            this,
+                            new ViewModelProvider.Factory() {
+                                @Override
+                                public <T extends ViewModel> T create(Class<T> modelClass) {
+                                    return (T)
+                                            new ApprovedDocHandlers(
+                                                    FilesActivity.this.getApplicationContext(),
+                                                    mInjector,
+                                                    Dispatchers.getIO());
+                                }
+                            })
+                    .get(ApprovedDocHandlers.class);
+
+            approvedDocMenuController = new ApprovedDocMenuController(
+                    LifecycleOwnerKt.getLifecycleScope(this),
+                    approvedDocHandlers,
+                    mInjector,
+                    Dispatchers.getMain().getImmediate());
+        }
 
         mInjector.focusManager =
                 new FocusManager(
@@ -150,21 +185,24 @@ public class FilesActivity extends BaseActivity implements AbstractActionHandler
                         this::focusSidebar,
                         getColor(getRes(R.color.primary)));
 
-        MenuManager menuManager = new MenuManager(
-                mInjector.features,
-                mSearchManager,
-                mState,
-                new DirectoryDetails(this) {
-                    @Override
-                    public boolean hasItemsToPaste() {
-                        return clipper.hasItemsToPaste();
-                    }
-                },
-                getApplicationContext(),
-                mInjector.selectionMgr,
-                mProviders::getApplicationName,
-                mInjector.getModel()::getItemUri,
-                mInjector.getModel()::getItemCount);
+        MenuManager menuManager =
+                new MenuManager(
+                        mInjector.features,
+                        mSearchManager,
+                        mState,
+                        new DirectoryDetails(this) {
+                            @Override
+                            public boolean hasItemsToPaste() {
+                                return clipper.hasItemsToPaste();
+                            }
+                        },
+                        getApplicationContext(),
+                        mInjector.selectionMgr,
+                        mProviders,
+                        mInjector.getModel()::getItemUri,
+                        mInjector.getModel()::getItemCount,
+                        mInjector,
+                        approvedDocMenuController);
         mInjector.menuManager = menuManager;
 
         if (isUseMaterial3FlagEnabled()) {
@@ -172,6 +210,7 @@ public class FilesActivity extends BaseActivity implements AbstractActionHandler
                     new SelectionBarController(
                             findViewById(getRes(R.id.toolbar)),
                             findViewById(getRes(R.id.selection_bar)),
+                            mInjector.focusManager,
                             mInjector.menuManager,
                             mInjector.selectionMgr);
         } else {
@@ -182,23 +221,6 @@ public class FilesActivity extends BaseActivity implements AbstractActionHandler
                             mNavigator,
                             mInjector.menuManager,
                             mInjector.messages);
-        }
-
-        // Directly use the generated method `usePeekPreviewRo` to optimize out Peek when the flag
-        // isn't enabled. The optimization is not happening with the FlagUtils's
-        // `isUsePeekPreviewFlagEnabled`.
-        if (usePeekPreviewRo()) {
-            if (isUsePeekPreviewFlagEnabled()) {
-                ViewModelProvider viewModelProvider = new ViewModelProvider(this);
-                PeekViewModel viewModel = viewModelProvider.get(PeekViewModel.class);
-                mPeekViewManager = new PeekViewManager(
-                        viewModel,
-                        findViewById(getRes(R.id.peek_overlay)),
-                        getSupportFragmentManager());
-                viewModel.getOverlayActive().observe(
-                        this,
-                        mPeekViewManager);
-            }
         }
 
         Runnable closeSelectionBarRunnable =
@@ -242,16 +264,17 @@ public class FilesActivity extends BaseActivity implements AbstractActionHandler
         mInjector.appsRowManager = mAppsRowManager;
 
         mActivityInputHandler =
-                new ActivityInputHandler(mInjector.actions::showDeleteDialog);
+                new ActivityInputHandler(mInjector.actions::runDeleteOrTrashHandler);
         mSharedInputHandler =
                 new SharedInputHandler(
+                        this,
                         mInjector.focusManager,
                         mInjector.selectionMgr,
                         mInjector.searchManager::cancelSearch,
                         this::popDir,
                         mInjector.features,
                         mDrawer,
-                        mInjector.searchManager::onSearchBarClicked);
+                        this::onSearchKeyboardShortcut);
 
         RootsFragment.show(getSupportFragmentManager(), /* includeApps= */ false,
                 /* intent= */ null);
@@ -426,8 +449,9 @@ public class FilesActivity extends BaseActivity implements AbstractActionHandler
             assert (canCreateDirectory());
             mInjector.actions.showCreateDirectoryDialog();
         } else if (id == getRes(R.id.option_menu_new_window)) {
-            mInjector.actions.openInNewWindow(mState.stack);
-        } else if (id == getRes(R.id.option_menu_settings)) {
+            mInjector.actions.openInNewWindow(mState.stack, mState.shortcut);
+        } else if (id == getRes(R.id.option_menu_settings)
+                || id == getRes(R.id.option_menu_manage_device)) {
             mInjector.actions.openSettings(getCurrentRoot());
         } else if (id == getRes(R.id.option_menu_extract_all)) {
             if (!isZipNgFlagEnabled()) return false;
@@ -435,10 +459,6 @@ public class FilesActivity extends BaseActivity implements AbstractActionHandler
             if (dir == null) return false;
             mInjector.actions.selectAllFiles();
             return dir.onContextItemSelected(item);
-        } else if (id == getRes(R.id.option_menu_select_all)) {
-            mInjector.actions.selectAllFiles();
-        } else if (id == getRes(R.id.option_menu_inspect)) {
-            mInjector.actions.showPreview(getCurrentDirectory());
         } else if (id == R.id.option_menu_add_shortcut) {
             assert(canCreateDirectory());
             mInjector.actions.showAddShortcutDialog(getCurrentDirectory());
@@ -489,17 +509,27 @@ public class FilesActivity extends BaseActivity implements AbstractActionHandler
     @Override
     public void onDirectoryCreated(DocumentInfo doc) {
         assert (doc.isDirectory());
-        mInjector.focusManager.focusDocument(doc.documentId);
-    }
-
-    @Override
-    protected boolean canInspectDirectory() {
-        return getCurrentDirectory() != null && mInjector.getModel().doc != null;
+        // We need to pass Model ID instead of Document ID to focusDocument() below, that's because
+        // FocusManager use Model ID (from adapter.getStableIds()) to identify which document in the
+        // list should be focused.
+        final String idToFocus =
+                isUseMaterial3FlagEnabled()
+                        ? ModelId.build(doc.userId, doc.authority, doc.documentId)
+                        : doc.documentId;
+        mInjector.focusManager.focusDocument(idToFocus);
     }
 
     @CallSuper
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (DEBUG) Log.d(TAG, "onKeyDown: " + keyCode + ", " + event);
+
+        if (isUseMaterial3FlagEnabled() && keyCode == KEYCODE_REFRESH && event.hasNoModifiers()) {
+            final DirectoryFragment dir = getDirectoryFragment();
+            if (dir != null) dir.onRefresh();
+            return true;
+        }
+
         return mActivityInputHandler.onKeyDown(keyCode, event)
                 || mSharedInputHandler.onKeyDown(keyCode, event)
                 || super.onKeyDown(keyCode, event);
@@ -507,11 +537,21 @@ public class FilesActivity extends BaseActivity implements AbstractActionHandler
 
     @Override
     public boolean onKeyShortcut(int keyCode, KeyEvent event) {
+        if (DEBUG) Log.d(TAG, "onKeyShortcut: " + keyCode + ", " + event);
+
         // TODO: All key events should be statically bound using alphabeticShortcut.
         // But not working.
 
         if (event.hasModifiers(KeyEvent.META_CTRL_ON)) {
             switch (keyCode) {
+                case KeyEvent.KEYCODE_SPACE:
+                    // Disable ctrl+space shortcut on Android S and earlier.
+                    // The OS does not deliver the key event.
+                    if (!isUseMaterial3FlagEnabled() || !VersionUtils.isGreaterThanS()) {
+                        break;
+                    }
+                    mInjector.actions.toggleFocusedItemSelection();
+                    return true;
                 case KeyEvent.KEYCODE_A:
                     mInjector.actions.selectAllFiles();
                     return true;
@@ -521,10 +561,27 @@ public class FilesActivity extends BaseActivity implements AbstractActionHandler
                 case KeyEvent.KEYCODE_C:
                     mInjector.actions.copyToClipboard();
                     return true;
+                case KeyEvent.KEYCODE_R:
+                    {
+                        if (!isUseMaterial3FlagEnabled()) break;
+                        final DirectoryFragment dir = getDirectoryFragment();
+                        if (dir != null) dir.onRefresh();
+                    }
+                    return true;
                 case KeyEvent.KEYCODE_V:
-                    DirectoryFragment dir = getDirectoryFragment();
-                    if (dir != null) {
-                        dir.pasteFromClipboard();
+                    {
+                        final DirectoryFragment dir = getDirectoryFragment();
+                        if (dir != null) dir.pasteFromClipboard();
+                    }
+                    return true;
+                case KeyEvent.KEYCODE_ENTER:
+                    {
+                        if (!isUseMaterial3FlagEnabled()) break;
+                        final Selection<String> selected = mInjector.actions.getFocusedOrSelected();
+                        if (selected.size() != 1) return true;
+                        final DirectoryFragment dir = getDirectoryFragment();
+                        if (dir == null) return true;
+                        dir.renameDocuments(selected);
                     }
                     return true;
             }

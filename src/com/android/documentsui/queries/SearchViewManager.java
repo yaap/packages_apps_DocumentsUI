@@ -20,7 +20,9 @@ import static com.android.documentsui.base.SharedMinimal.DEBUG;
 import static com.android.documentsui.base.State.ACTION_GET_CONTENT;
 import static com.android.documentsui.base.State.ACTION_OPEN;
 import static com.android.documentsui.base.State.ActionType;
+import static com.android.documentsui.util.FlagUtils.isIncludeRemoteRootsInRecentsEnabled;
 import static com.android.documentsui.util.FlagUtils.isSearchV2Enabled;
+import static com.android.documentsui.util.FlagUtils.isUseAllfilesRootForRecentsEnabled;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
 
@@ -111,7 +113,6 @@ public class SearchViewManager implements
     private @Nullable MenuItem mDockedSearch;
     private @Nullable EditText mDockedSearchEditText;
     private @Nullable FragmentManager mFragmentManager;
-    private @Nullable RootInfo mCurrentRoot;
 
     public SearchViewManager(
             SearchManagerListener listener,
@@ -143,13 +144,13 @@ public class SearchViewManager implements
         mUiHandler = handler;
         mChipViewManager = chipViewManager;
         mChipViewManager.setSearchChipViewManagerListener(this::onChipCheckedStateChanged);
-        mCurrentRoot = null;
         if (!isSearchV2Enabled()) {
             mSearchOptionsController = null;
         } else {
             mSearchOptionsController = searchOptionsController;
             mLocationOption = SearchLocationOption.ROOT_FOLDER;
             if (mSearchOptionsController != null) {
+                mSearchOptionsController.restoreState(savedState);
                 mSearchOptionsController.setOptionChangeListener(this::onSearchOptionsChanged);
             }
         }
@@ -173,8 +174,18 @@ public class SearchViewManager implements
     }
 
     /**
-     * Parse the query content from Intent. If the action is not {@link State#ACTION_GET_CONTENT}
-     * or {@link State#ACTION_OPEN}, don't perform search.
+     * @return If the search options are provided by dropdown options.
+     */
+    private boolean hasDropdownOptions() {
+        return isSearchV2Enabled()
+                && mSearchOptionsController != null
+                && mSearchOptionsController.isVisible();
+    }
+
+    /**
+     * Parse the query content from Intent. If the action is not {@link State#ACTION_GET_CONTENT} or
+     * {@link State#ACTION_OPEN}, don't perform search.
+     *
      * @param intent the intent to parse.
      * @param action the action to check.
      * @return True, if get the query content from the intent. Otherwise, false.
@@ -197,9 +208,10 @@ public class SearchViewManager implements
      * @return the bundle of query arguments
      */
     public Bundle buildQueryArgs() {
-        final Bundle queryArgs = isSearchV2Enabled() && mSearchOptionsController.isVisible()
-                ? mSearchOptionsController.getOptionsQueryArgs()
-                : mChipViewManager.getCheckedChipQueryArgs();
+        final Bundle queryArgs =
+                hasDropdownOptions()
+                        ? mSearchOptionsController.getOptionsQueryArgs()
+                        : mChipViewManager.getCheckedChipQueryArgs();
         if (!TextUtils.isEmpty(mCurrentSearch)) {
             queryArgs.putString(DocumentsContract.QUERY_ARG_DISPLAY_NAME, mCurrentSearch);
         } else if (isExpanded() && isSearching()) {
@@ -256,19 +268,25 @@ public class SearchViewManager implements
     }
 
     /**
-     * Initailize search view by option menu.
+     * Initialize search view by option menu.
      *
-     * @param menu            the menu include search view
+     * @param menu the menu include search view
      * @param isFullBarSearch whether hide other menu when search view expand
      * @param isShowSearchBar whether replace collapsed search view by search hint text
      * @param showDockedSearch whether show a docked (inline) search bar in the toolbar. When true,
-     *                         the search icon and search view will be hidden.
+     *     the search icon and search view will be hidden.
      */
-    public void install(Menu menu, boolean isFullBarSearch, boolean isShowSearchBar,
-            boolean showDockedSearch) {
+    public void install(
+            Menu menu, boolean isFullBarSearch, boolean isShowSearchBar, boolean showDockedSearch) {
         mMenu = menu;
         mMenuItem = mMenu.findItem(getRes(R.id.option_menu_search));
         mSearchView = (SearchView) mMenuItem.getActionView();
+        if (!isUseMaterial3FlagEnabled() && mSearchView != null) {
+            View searchPlate = mSearchView.findViewById(androidx.appcompat.R.id.search_plate);
+            if (searchPlate != null) {
+                searchPlate.setBackgroundResource(R.drawable.legacy_search_bg);
+            }
+        }
 
         mSearchView.setOnQueryTextListener(this);
         mSearchView.setOnCloseListener(this);
@@ -355,7 +373,7 @@ public class SearchViewManager implements
      */
     public void updateMenu() {
         if (mMenu != null && isExpanded() && mFullBar) {
-            mMenu.setGroupVisible(getRes(R.id.group_hide_when_searching), false);
+            showNonSearchOptionMenus(false);
         }
     }
 
@@ -375,8 +393,7 @@ public class SearchViewManager implements
             if (mCurrentSearch != null) {
                 mDockedSearchEditText.setText(mCurrentSearch);
             } else {
-                mDockedSearchEditText.setText("");
-                mDockedSearchEditText.clearFocus();
+                closeDockedSearch();
             }
         } else {
             if (mMenuItem == null || mSearchView == null) {
@@ -431,7 +448,7 @@ public class SearchViewManager implements
         }
 
         if (!supportsSearch) {
-            mCurrentSearch = null;
+            setCurrentSearch(null);
         }
 
         if (mShowDockedSearch && !mShowSearchBar) {
@@ -444,9 +461,37 @@ public class SearchViewManager implements
             mMenuItem.setVisible(supportsSearch && (!stack.isRecents() || !mShowSearchBar));
         }
 
-        if (!isSearchV2Enabled()) {
+        // Do not show chips on trash pages.
+        if (stack != null && stack.isTrashRoot()) {
+            mChipViewManager.setChipsRowVisible(false);
+        } else if (!isSearchV2Enabled()) {
             mChipViewManager.setChipsRowVisible(supportsSearch && root.supportsMimeTypesSearch());
+        } else {
+            // Always show chips in search v2 as long as there is no current search query (i.e.
+            // don't show search options and chips both at the same time).
+            mChipViewManager.setChipsRowVisible(/* show */ !isSearching());
         }
+    }
+
+    /**
+     * "Closes" docked search. Since the docked search cannot be hidden, all this method does is to
+     * set the text to empty string and transfers focus.
+     *
+     * @return Whether or not any changes were made to the UI.
+     */
+    private boolean closeDockedSearch() {
+        boolean changed = false;
+        if (isSearchV2Enabled() && mDockedSearchEditText != null) {
+            if (!TextUtils.isEmpty(mDockedSearchEditText.getText())) {
+                mDockedSearchEditText.setText("");
+                changed = true;
+            }
+            if (mDockedSearchEditText.hasFocus()) {
+                mDockedSearchEditText.clearFocus();
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     /**
@@ -455,6 +500,13 @@ public class SearchViewManager implements
      * @return True if it cancels search. False if it does not operate search currently.
      */
     public boolean cancelSearch() {
+        boolean handled = false;
+        if (isSearchV2Enabled()) {
+            // Show the chips again, once the search has been canceled.
+            useSearchOptions(SearchOptionsControls.CHIPS);
+            handled = closeDockedSearch();
+        }
+
         if ((isExpanded() || isSearching())) {
             cancelQueuedSearch();
 
@@ -465,9 +517,9 @@ public class SearchViewManager implements
                 mSearchView.setIconified(true);
             }
 
-            return true;
+            handled = true;
         }
-        return false;
+        return handled;
     }
 
     private int getPixelForDp(int dp) {
@@ -523,6 +575,22 @@ public class SearchViewManager implements
         }
     }
 
+    /**
+     * Called when the user hits the KeyEvent.KEYCODE_SEARCH key (or Alt-Space, which is an
+     * Android-wide equivalent).
+     */
+    public void onSearchKeyboardShortcut() {
+        if (mDockedSearchEditText != null) {
+            mDockedSearchEditText.requestFocus();
+            return;
+        }
+
+        onSearchBarClicked();
+        if ((mSearchView != null) && isUseMaterial3FlagEnabled()) {
+            mSearchView.requestFocus();
+        }
+    }
+
     public void onSearchBarClicked() {
         if (mMenuItem == null) {
             return;
@@ -535,7 +603,7 @@ public class SearchViewManager implements
     private void onSearchExpanded() {
         mSearchExpanded = true;
         if (mFullBar && mMenu != null) {
-            mMenu.setGroupVisible(getRes(R.id.group_hide_when_searching), false);
+            showNonSearchOptionMenus(false);
         }
 
         mListener.onSearchViewChanged(true);
@@ -549,7 +617,9 @@ public class SearchViewManager implements
      */
     public void setCurrentRoot(RootInfo root) {
         if (isSearchV2Enabled()) {
-            mCurrentRoot = root;
+            if (mSearchOptionsController != null) {
+                mLocationOption = mSearchOptionsController.setRoot(root);
+            }
         }
     }
 
@@ -566,7 +636,7 @@ public class SearchViewManager implements
                     if (mimeChipType != null) {
                         mSearchOptionsController.setSelectedFileType(mimeChipType);
                     }
-                    mSearchOptionsController.show(mCurrentRoot);
+                    mSearchOptionsController.show();
                 } else {
                     mSearchOptionsController.hide();
                 }
@@ -603,8 +673,7 @@ public class SearchViewManager implements
 
             // Clear checked chips
             mChipViewManager.clearCheckedChips();
-            mCurrentSearch = null;
-            mListener.onSearchChanged(mCurrentSearch);
+            setCurrentSearch(null);
         }
 
         if (mFullBar && mMenuItem != null) {
@@ -631,6 +700,9 @@ public class SearchViewManager implements
         }
         state.putString(Shared.EXTRA_QUERY, mCurrentSearch);
         mChipViewManager.onSaveInstanceState(state);
+        if (mSearchOptionsController != null) {
+            mSearchOptionsController.saveState(state);
+        }
     }
 
     /**
@@ -653,10 +725,7 @@ public class SearchViewManager implements
         } else {
             cancelQueuedSearch();
             // Don't kick off a search if we've already finished it.
-            if (!TextUtils.equals(mCurrentSearch, query)) {
-                mCurrentSearch = query;
-                mListener.onSearchChanged(mCurrentSearch);
-            }
+            setCurrentSearch(query);
             recordHistory();
             if (!mShowDockedSearch && mSearchView != null) {
                 mSearchView.clearFocus();
@@ -669,12 +738,20 @@ public class SearchViewManager implements
     }
 
     /**
-     * Used to detect and handle back button pressed event when search is expanded.
+     * Used to detect and handle back button pressed event when search is expanded. This is only
+     * called for SearchView. The docked search has a separate focus listener.
      */
     @Override
     public void onFocusChange(View v, boolean hasFocus) {
-        // This is only called for SearchView. The docked search has a separate focus listener.
-        if (!hasFocus && !mChipViewManager.hasCheckedItems()) {
+        // If we have a pending search, we ignore focus change. This is the same as if the current
+        // search query was not null. However, mCurrentSearch may stay null until the pending task
+        // updates it.
+        boolean shouldClose;
+        synchronized (mSearchLock) {
+            shouldClose =
+                    !(hasFocus || mChipViewManager.hasCheckedItems() || mQueuedSearchTask != null);
+        }
+        if (shouldClose) {
             if (mCurrentSearch == null) {
                 if (!mShowDockedSearch && mSearchView != null) {
                     mSearchView.setIconified(true);
@@ -693,14 +770,17 @@ public class SearchViewManager implements
             public void run() {
                 // Do the actual work on the main looper.
                 synchronized (mSearchLock) {
-                    mQueuedSearchRunnable = () -> {
-                        mCurrentSearch = newText;
-                        if (mCurrentSearch != null && mCurrentSearch.isEmpty()) {
-                            mCurrentSearch = null;
-                        }
-                        logTextSearchMetric();
-                        mListener.onSearchChanged(mCurrentSearch);
-                    };
+                    mQueuedSearchRunnable =
+                            () -> {
+                                boolean notified = setCurrentSearch(newText);
+                                logTextSearchMetric();
+                                // If options change, the setCurrentSearch does not notify the
+                                // listener. We amend this here.
+                                // TODO(b:450381836): Unify text and option change notifications.
+                                if (!notified) {
+                                    mListener.onSearchChanged(newText);
+                                }
+                            };
                     mUiHandler.post(mQueuedSearchRunnable);
                 }
             }
@@ -716,6 +796,15 @@ public class SearchViewManager implements
         return Objects.requireNonNull(mSearchView, "SearchView is null").getContext();
     }
 
+    /**
+     * Gets the application context. Overridable in test since getCurrentContext() is based on
+     * SearchView which context will be null in test and not overridable.
+     */
+    @VisibleForTesting
+    protected Context getApplicationContext() {
+        return getCurrentContext().getApplicationContext();
+    }
+
     @Override
     public boolean onQueryTextChange(String newText) {
         if (isSearchV2Enabled()) {
@@ -725,7 +814,7 @@ public class SearchViewManager implements
                 useSearchOptions(SearchOptionsControls.DROPDOWNS);
             }
         }
-        //Skip first search when search expanded
+        // Skip first search when search expanded
         if (mCurrentSearch == null && newText.isEmpty()) {
             return true;
         }
@@ -749,13 +838,18 @@ public class SearchViewManager implements
         synchronized (mSearchLock) {
             mQueuedSearchTask = createSearchTask(newText);
 
+            // TODO(b/471061093): Can be simplified by using postDelayed rather than a timer.
             mTimer.schedule(mQueuedSearchTask, SEARCH_DELAY_MS);
         }
     }
 
     @Override
     public boolean onMenuItemActionCollapse(MenuItem item) {
-        mMenu.setGroupVisible(getRes(R.id.group_hide_when_searching), true);
+        // When M3 is enabled, defer visibility changes BaseActivity's search listener as we may not
+        // want to unconditionally show every item.
+        if (!isUseMaterial3FlagEnabled()) {
+            showNonSearchOptionMenus(true);
+        }
 
         // Handles case when search view is collapsed by using the arrow on the left of the bar
         if (isExpanded() || isSearching()) {
@@ -780,12 +874,13 @@ public class SearchViewManager implements
      * @return  Current string on search view
      */
     public String getSearchViewText() {
+        CharSequence text = null;
         if (!mShowDockedSearch && mSearchView != null) {
-            return mSearchView.getQuery().toString();
+            text = mSearchView.getQuery();
         } else if (mShowDockedSearch && mDockedSearchEditText != null) {
-            return mDockedSearchEditText.getText().toString();
+            text = mDockedSearchEditText.getText();
         }
-        return null;
+        return text == null ? null : text.toString();
     }
 
     /**
@@ -805,8 +900,7 @@ public class SearchViewManager implements
             return;
         }
 
-        SearchHistoryManager.getInstance(
-                getCurrentContext().getApplicationContext()).addHistory(mCurrentSearch);
+        SearchHistoryManager.getInstance(getApplicationContext()).addHistory(mCurrentSearch);
     }
 
     /**
@@ -820,8 +914,7 @@ public class SearchViewManager implements
             return;
         }
 
-        SearchHistoryManager.getInstance(
-                getCurrentContext().getApplicationContext()).deleteHistory(history);
+        SearchHistoryManager.getInstance(getApplicationContext()).deleteHistory(history);
     }
 
     private void logTextSearchMetric() {
@@ -843,8 +936,38 @@ public class SearchViewManager implements
         return mQueryContentFromIntent;
     }
 
-    public void setCurrentSearch(String queryString) {
+    /**
+     * Updates the current search to the specified query. If the search query has changed the
+     * SearchManagerListener is notified about it.
+     *
+     * @param queryString The new current search query.
+     * @return If a onSearchChanged notification was posted.
+     */
+    public boolean setCurrentSearch(String queryString) {
+        if (setCurrentSearchInternal(queryString) && mListener != null) {
+            mListener.onSearchChanged(queryString);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Updates the search query without posting any updates about it.
+     *
+     * @param queryString The new current search query.
+     * @return Whether or not the search query has been changed.
+     */
+    private boolean setCurrentSearchInternal(String queryString) {
+        if (TextUtils.equals(mCurrentSearch, queryString)) {
+            return false;
+        }
         mCurrentSearch = queryString;
+        if (mCurrentSearch != null && mCurrentSearch.isEmpty()) {
+            // Due isSearching() method checking for null query only, if the query is empty we
+            // force it to null, so that isSearching() returns false.
+            mCurrentSearch = null;
+        }
+        return true;
     }
 
     /**
@@ -877,22 +1000,46 @@ public class SearchViewManager implements
      * @return The subset of roots to be queried about recent files.
      */
     private Collection<RootInfo> getRecentRoots(Stream<RootInfo> roots, UserId userId) {
-        return roots.filter(r -> r.isLocalOnly()
-                && r.supportsRecents() && r.userId.equals(userId)
-                && !r.isExternalStorage()).collect(
-                Collectors.toList());
+        if (isUseAllfilesRootForRecentsEnabled()) {
+            return roots.filter(
+                            r ->
+                                    r.supportsRecents()
+                                            && r.userId.equals(userId)
+                                            && (r.isFiles()
+                                                    || (isIncludeRemoteRootsInRecentsEnabled()
+                                                            && !r.isLocalOnly())))
+                    .collect(Collectors.toList());
+        }
+
+        return roots.filter(
+                        r ->
+                                r.supportsRecents()
+                                        && r.userId.equals(userId)
+                                        && !r.isExternalStorage()
+                                        && !r.isFiles()
+                                        && (r.isLocalOnly()
+                                                || isIncludeRemoteRootsInRecentsEnabled()))
+                .collect(Collectors.toList());
     }
 
     /**
-     * Returns all roots that can deliver search results. In order to avoid duplicate results,
-     * we remove all MEDIA sources, and downloads, since files in those providers are also known
-     * to the external storage provider.
+     * Returns all roots that can deliver search results. In order to avoid duplicate results, we
+     * remove all MEDIA sources, downloads, and local search since files in those providers are also
+     * known to the external storage provider.
+     *
      * @param roots A stream of roots that is guaranteed to have rootId, and authority.
      * @return The subset of roots that can be searched.
      */
     private Collection<RootInfo> getAllSearchableRoots(Stream<RootInfo> roots) {
-        return roots.filter(r -> !Providers.AUTHORITY_MEDIA.equals(r.authority)
-                && !r.isDownloads()).collect(Collectors.toList());
+        if (mSearchView == null) {
+            return Collections.emptyList();
+        }
+        return roots.filter(
+                        r ->
+                                !Providers.AUTHORITY_MEDIA.equals(r.authority)
+                                        && !r.isDownloads()
+                                        && !r.isLocalSearch(getApplicationContext()))
+                .collect(Collectors.toList());
     }
 
     /**
@@ -910,8 +1057,11 @@ public class SearchViewManager implements
             // If we don't know where to search, search nowhere.
             return Collections.emptyList();
         }
-        Stream<RootInfo> core = roots.stream().filter(
-                r -> r.rootId != null && r.authority != null && r.supportsSearch());
+        // TODO(b/483128303) Using r.supportsSearch() artificially constrains the Recent view to
+        // only query DocumentsProviders that also support search.
+        Stream<RootInfo> core =
+                roots.stream()
+                        .filter(r -> r.rootId != null && r.authority != null && r.supportsSearch());
         if (mLocationOption == SearchLocationOption.EVERYWHERE) {
             // If the current location is everywhere get all searchable roots.
             return getAllSearchableRoots(core);
@@ -926,6 +1076,18 @@ public class SearchViewManager implements
         }
         // Just search current root.
         return Collections.singletonList(stack.getRoot());
+    }
+
+    private void showNonSearchOptionMenus(boolean show) {
+        if (isUseMaterial3FlagEnabled()) {
+            mMenu.setGroupVisible(getRes(R.id.menu_clipboard_group), show);
+            mMenu.setGroupVisible(getRes(R.id.menu_folder_manage_group), show);
+            mMenu.setGroupVisible(getRes(R.id.menu_modifier_group), show);
+            mMenu.setGroupVisible(getRes(R.id.menu_settings_group), show);
+            mMenu.setGroupVisible(getRes(R.id.menu_debug_group), show);
+        } else {
+            mMenu.setGroupVisible(getRes(R.id.group_hide_when_searching), show);
+        }
     }
 
     public interface SearchManagerListener {

@@ -16,16 +16,18 @@
 
 package com.android.documentsui;
 
-import static com.android.documentsui.base.DocumentInfo.getCursorString;
+import static com.android.documentsui.util.FlagUtils.isSyncStateEnabled;
 
 import android.content.ContentProviderClient;
 import android.database.Cursor;
 import android.os.FileUtils;
-import android.provider.DocumentsContract;
 import android.util.Log;
+
+import androidx.annotation.Nullable;
 
 import com.android.documentsui.archives.ArchivesProvider;
 import com.android.documentsui.base.DocumentInfo;
+import com.android.documentsui.loaders.QueryOptions;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -41,6 +43,33 @@ public class DirectoryResult implements AutoCloseable {
     private Cursor mCursor;
     private Set<String> mFileNames;
     private String[] mModelIds;
+    private Set<String> mSyncInProgressModelIds;
+
+    private boolean mHasLimitedFunctionalityWhenOffline = false;
+
+    /** The query used when searching that originated this search result. */
+    private @Nullable String mQuery;
+
+    /** The query options used that originated this search result. */
+    private @Nullable QueryOptions mQueryOptions;
+
+    @Nullable
+    public String getQuery() {
+        return mQuery;
+    }
+
+    public void setQuery(@Nullable String query) {
+        mQuery = query;
+    }
+
+    @Nullable
+    public QueryOptions getQueryOptions() {
+        return mQueryOptions;
+    }
+
+    public void setQueryOptions(@Nullable QueryOptions queryOptions) {
+        mQueryOptions = queryOptions;
+    }
 
     @Override
     public void close() {
@@ -77,6 +106,19 @@ public class DirectoryResult implements AutoCloseable {
         return mFileNames;
     }
 
+    public Set<String> getSyncInProgressModelIds() {
+        return mSyncInProgressModelIds;
+    }
+
+    /**
+     * Whether the directory result is from querying a single root that has limited functionality
+     * when offline or is from querying multiple roots where at least one of them has limited
+     * functionality when offline and contains files.
+     */
+    public boolean getHasLimitedFunctionalityWhenOffline() {
+        return mHasLimitedFunctionalityWhenOffline;
+    }
+
     /** Update the cursor and populate cursor-related fields. */
     public void setCursor(Cursor cursor) {
         mCursor = cursor;
@@ -84,9 +126,14 @@ public class DirectoryResult implements AutoCloseable {
         if (mCursor == null) {
             mFileNames = null;
             mModelIds = null;
+            mSyncInProgressModelIds = null;
         } else {
             loadDataFromCursor();
         }
+    }
+
+    public void setHasLimitedFunctionalityWhenOffline(boolean hasLimitedFunctionalityWhenOffline) {
+        mHasLimitedFunctionalityWhenOffline = hasLimitedFunctionalityWhenOffline;
     }
 
     /** Populate cursor-related field. Must not be called from UI thread. */
@@ -95,6 +142,7 @@ public class DirectoryResult implements AutoCloseable {
         int cursorCount = mCursor.getCount();
         String[] modelIds = new String[cursorCount];
         Set<String> fileNames = new HashSet<>();
+        Set<String> syncInProgressModelIds = new HashSet<>();
         try {
             mCursor.moveToPosition(-1);
             for (int pos = 0; pos < cursorCount; ++pos) {
@@ -107,8 +155,13 @@ public class DirectoryResult implements AutoCloseable {
                 // ID is a unique string that can be used to identify the document referred to by
                 // the cursor. Prefix the ids with the authority to avoid collisions.
                 modelIds[pos] = ModelId.build(mCursor);
-                fileNames.add(
-                        getCursorString(mCursor, DocumentsContract.Document.COLUMN_DISPLAY_NAME));
+                DocumentInfo docInfo = DocumentInfo.fromDirectoryCursor(mCursor);
+                fileNames.add(docInfo.displayName);
+
+                if (isSyncStateEnabled()
+                        && (docInfo.hasUploadInProgress() || docInfo.hasDownloadInProgress())) {
+                    syncInProgressModelIds.add(modelIds[pos]);
+                }
             }
         } catch (Exception e) {
             Log.e(TAG, "Exception when moving cursor. Stale cursor?", e);
@@ -118,5 +171,6 @@ public class DirectoryResult implements AutoCloseable {
         // Model related data is only non-null when no error iterating through cursor.
         mModelIds = modelIds;
         mFileNames = fileNames;
+        mSyncInProgressModelIds = syncInProgressModelIds;
     }
 }

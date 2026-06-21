@@ -77,12 +77,13 @@ public class DialogUiTest {
             FilesActivity.class);
 
     @Before
-    public void setup() {
+    public void setup() throws Exception {
         mFileActivityIntent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         mFragmentManager = mActivityTestRule.getActivity().getSupportFragmentManager();
         mScreenDensitySession = new ScreenDensitySession();
 
         final UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+        device.setOrientationNatural();
         device.pressKeyCode(KeyEvent.KEYCODE_WAKEUP);
         device.pressKeyCode(KeyEvent.KEYCODE_MENU);
     }
@@ -253,7 +254,7 @@ public class DialogUiTest {
         mFragmentManager = Mockito.mock(FragmentManager.class);
         Mockito.when(mFragmentManager.isStateSaved()).thenReturn(true);
 
-        DeleteDocumentFragment.show(mFragmentManager, null, null);
+        DeleteDocumentFragment.show(mFragmentManager, null, null, /* inTrash */ false);
     }
 
     @Test

@@ -16,6 +16,7 @@
 
 package com.android.documentsui.bots;
 
+import android.annotation.LayoutRes;
 import android.app.UiAutomation;
 import android.content.Context;
 import android.graphics.Point;
@@ -49,8 +50,13 @@ public class GestureBot extends Bots.BaseBot {
     private final UiAutomation mAutomation;
     private long mDownTime = 0;
 
-    public GestureBot(UiDevice device, UiAutomation automation, Context context, int timeout) {
-        super(device, context, timeout);
+    public GestureBot(
+            UiDevice device,
+            UiAutomation automation,
+            Context context,
+            long timeout,
+            @LayoutRes Integer layoutId) {
+        super(device, context, timeout, layoutId);
         mDirContainerId = mTargetPackage + ":id/container_directory";
         mDirListId = mTargetPackage + ":id/dir_list";
         mAutomation = automation;
@@ -77,6 +83,22 @@ public class GestureBot extends Bots.BaseBot {
             points[i + LONGPRESS_STEPS] = new Point(newX, newY);
         }
         mDevice.swipe(points, STEPS_INBETWEEN_POINTS);
+        Configurator.getInstance().setToolType(toolType);
+    }
+
+    public void dragAndDrop(Rect source, Rect destination) throws Exception {
+        int toolType = Configurator.getInstance().getToolType();
+        Configurator.getInstance().setToolType(MotionEvent.TOOL_TYPE_MOUSE);
+
+        swipe(
+                source.centerX(),
+                source.centerY(),
+                destination.centerX(),
+                destination.centerY(),
+                BAND_SELECTION_DEFAULT_STEPS,
+                MotionEvent.BUTTON_PRIMARY,
+                false);
+
         Configurator.getInstance().setToolType(toolType);
     }
 
@@ -108,7 +130,11 @@ public class GestureBot extends Bots.BaseBot {
                 new UiSelector().resourceId(mDirListId));
 
         // Wait for the first list item to appear
-        new UiObject(docList.childSelector(new UiSelector())).waitForExists(mTimeout);
+        boolean exists =
+                new UiObject(docList.childSelector(new UiSelector())).waitForExists(mTimeout);
+        if (!exists) {
+            throw new UiObjectNotFoundException("First list item not found after timeout");
+        }
 
         return mDevice.findObject(docList.childSelector(new UiSelector().text(label)));
     }
@@ -144,7 +170,7 @@ public class GestureBot extends Bots.BaseBot {
     }
 
     private boolean touchDown(int x, int y, int button) {
-        long mDownTime = SystemClock.uptimeMillis();
+        mDownTime = SystemClock.uptimeMillis();
         MotionEvent event = getMotionEvent(mDownTime, mDownTime, MotionEvent.ACTION_DOWN, button, x,
                 y);
         return mAutomation.injectInputEvent(event, true);
@@ -153,7 +179,6 @@ public class GestureBot extends Bots.BaseBot {
     private boolean touchUp(int x, int y) {
         final long eventTime = SystemClock.uptimeMillis();
         MotionEvent event = getMotionEvent(mDownTime, eventTime, MotionEvent.ACTION_UP, 0, x, y);
-        mDownTime = 0;
         return mAutomation.injectInputEvent(event, true);
     }
 

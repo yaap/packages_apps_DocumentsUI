@@ -30,6 +30,9 @@ import static com.android.documentsui.DevicePolicyResources.Strings.CROSS_PROFIL
 import static com.android.documentsui.DevicePolicyResources.Strings.CROSS_PROFILE_NOT_ALLOWED_TITLE;
 import static com.android.documentsui.DevicePolicyResources.Strings.WORK_PROFILE_OFF_ENABLE_BUTTON;
 import static com.android.documentsui.DevicePolicyResources.Strings.WORK_PROFILE_OFF_ERROR_TITLE;
+import static com.android.documentsui.util.FlagUtils.isSearchV2Enabled;
+import static com.android.documentsui.util.FlagUtils.isSyncStateEnabled;
+import static com.android.documentsui.util.FlagUtils.isTrashFlowEnabled;
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
 
@@ -89,6 +92,7 @@ abstract class Message {
     protected boolean mShouldKeep = false;
     protected int mLayout;
     protected ConfigStore mConfigStore;
+    protected boolean mIsButtonEnabled = true;
 
     Message(Environment env, Runnable defaultCallback, ConfigStore configStore) {
         mEnv = env;
@@ -100,6 +104,15 @@ abstract class Message {
 
     protected void update(@Nullable CharSequence messageTitle, CharSequence messageString,
             @Nullable CharSequence buttonString, Drawable icon) {
+        update(messageTitle, messageString, buttonString, icon, /* isButtonEnabled */ true);
+    }
+
+    protected void update(
+            @Nullable CharSequence messageTitle,
+            CharSequence messageString,
+            @Nullable CharSequence buttonString,
+            Drawable icon,
+            boolean isButtonEnabled) {
         if (messageString == null) {
             return;
         }
@@ -108,6 +121,7 @@ abstract class Message {
         mButtonString = buttonString;
         mIcon = icon;
         mShouldShow = true;
+        mIsButtonEnabled = isButtonEnabled;
     }
 
     void reset() {
@@ -115,6 +129,7 @@ abstract class Message {
         mIcon = null;
         mShouldShow = false;
         mLayout = 0;
+        mIsButtonEnabled = true;
     }
 
     void runCallback() {
@@ -158,6 +173,10 @@ abstract class Message {
         return mButtonString;
     }
 
+    boolean isButtonEnabled() {
+        return mIsButtonEnabled;
+    }
+
     final static class HeaderMessage extends Message {
 
         private static final String TAG = "HeaderMessage";
@@ -174,6 +193,27 @@ abstract class Message {
             // overwriting.
             if (event.hasAuthenticationException()) {
                 updateToAuthenticationExceptionHeader(event);
+            } else if (isTrashFlowEnabled()
+                    && isUseMaterial3FlagEnabled()
+                    && mEnv.isOnTrashPage()) {
+                final boolean isEmptyPage = mEnv.getModel().getModelIds().length == 0;
+                update(
+                        null,
+                        mEnv.getContext().getString(getRes(R.string.empty_trash_banner_message)),
+                        mEnv.getContext().getString(getRes(R.string.empty_trash_banner_button)),
+                        null,
+                        /* isButtonEnabled */ !isEmptyPage);
+            } else if (isSyncStateEnabled()
+                    && !mEnv.isOnline()
+                    && mEnv.getModel().hasLimitedFunctionalityWhenOffline()) {
+                // Show the offline banner whenever the system is offline and the files/root has
+                // limited functionality when offline.
+                update(
+                        null,
+                        mEnv.getContext()
+                                .getString(getRes(R.string.you_are_offline_banner_message)),
+                        mEnv.getContext().getString(getRes(R.string.button_dismiss)),
+                        mEnv.getContext().getDrawable(R.drawable.ic_wifi_off_m3));
             } else if (mEnv.getModel().error != null) {
                 update(
                         null,
@@ -296,7 +336,8 @@ abstract class Message {
                 updateToInflatedErrorMessage();
             } else if (event.hasAuthenticationException()) {
                 updateToCantDisplayContentMessage();
-            } else if (mEnv.getModel().getModelIds().length == 0) {
+            } else if (mEnv.getModel().getModelIds().length == 0
+                    && (!isSearchV2Enabled() || !mEnv.getModel().isLoading())) {
                 updateToInflatedEmptyMessage();
             }
         }
@@ -490,14 +531,29 @@ abstract class Message {
             final CharSequence message;
             final @DrawableRes int drawableId;
             if (mEnv.isInSearchMode()) {
-                message = String.format(
-                        String.valueOf(
-                                mEnv.getContext().getResources().getText(R.string.no_results)),
-                        mEnv.getDisplayState().stack.getRoot().title);
+                if (isUseMaterial3FlagEnabled()) {
+                    message =
+                            String.valueOf(
+                                    mEnv.getContext()
+                                            .getResources()
+                                            .getText(getRes(R.string.no_results)));
+                } else {
+                    message =
+                            String.format(
+                                    String.valueOf(
+                                            mEnv.getContext()
+                                                    .getResources()
+                                                    .getText(R.string.no_results)),
+                                    mEnv.getDisplayState().stack.getRoot().title);
+                }
                 drawableId =
                         isUseMaterial3FlagEnabled()
                                 ? R.drawable.empty_search
                                 : R.drawable.empty;
+            } else if (isTrashFlowEnabled() && mEnv.isOnTrashPage()) {
+                message = mEnv.getContext().getResources().getText(R.string.trash_page_empty_title);
+                drawableId =
+                        isUseMaterial3FlagEnabled() ? R.drawable.ic_empty_trash : R.drawable.empty;
             } else {
                 message = mEnv.getContext().getResources().getText(R.string.empty);
                 drawableId = getRes(R.drawable.empty);

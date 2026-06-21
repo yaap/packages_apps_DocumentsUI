@@ -79,8 +79,13 @@ public class RecentsLoader extends MultiRootDocumentsLoader {
 
     @Override
     protected boolean shouldIgnoreRoot(RootInfo root) {
-        // only query the root is local only, support recents, and is from the selected user.
-        return !root.isLocalOnly() || !root.supportsRecents() || !mUserId.equals(root.userId);
+        // only query the root is local only, support recents, from the selected user, and not the
+        // MediaDocumentsProvider "all files" root, which is only supported when using Searchv2.
+        return !root.isLocalOnly()
+                || !root.supportsRecents()
+                || !mUserId.equals(root.userId)
+                || root.isFiles()
+                || root.isLocalSearch(getContext());
     }
 
     @Override
@@ -101,7 +106,12 @@ public class RecentsLoader extends MultiRootDocumentsLoader {
 
         @Override
         protected RootCursorWrapper generateResultCursor(RootInfo rootInfo, Cursor oriCursor) {
-            return new RootCursorWrapper(rootInfo.userId, authority, rootInfo.rootId, oriCursor,
+            return new RootCursorWrapper(
+                    rootInfo.userId,
+                    authority,
+                    rootInfo.rootId,
+                    rootInfo.hasLimitedFunctionalityWhenOffline(),
+                    oriCursor,
                     MAX_DOCS_FROM_ROOT);
         }
     }

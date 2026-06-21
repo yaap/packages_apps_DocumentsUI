@@ -16,30 +16,53 @@
 
 package com.android.documentsui.dirlist;
 
+import static android.provider.Flags.FLAG_ENABLE_DOCUMENTS_TRASH_API;
+import static android.provider.Flags.FLAG_ENABLE_SYNC_STATE;
+
 import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+
 import android.content.Context;
+import android.os.Build;
 import android.os.Bundle;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
+import android.platform.test.annotations.RequiresFlagsEnabled;
+import android.platform.test.flag.junit.CheckFlagsRule;
+import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.provider.DocumentsContract;
-import android.test.AndroidTestCase;
 import android.view.ViewGroup;
 
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.filters.MediumTest;
+import androidx.test.filters.SdkSuppress;
+import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.runner.AndroidJUnit4;
 
 import com.android.documentsui.ActionHandler;
 import com.android.documentsui.ModelId;
 import com.android.documentsui.TestConfigStore;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.State;
+import com.android.documentsui.flags.Flags;
+import com.android.documentsui.rules.OverrideFlagsRule;
 import com.android.documentsui.testing.TestActionHandler;
 import com.android.documentsui.testing.TestEnv;
 import com.android.documentsui.testing.TestFileTypeLookup;
+import com.android.documentsui.testing.TestModel;
 import com.android.documentsui.testing.TestProvidersAccess;
 import com.android.documentsui.util.VersionUtils;
 
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+@RunWith(AndroidJUnit4.class)
 @MediumTest
-public class DirectoryAddonsAdapterTest extends AndroidTestCase {
+public class DirectoryAddonsAdapterTest {
 
     private static final String AUTHORITY = "test_authority";
 
@@ -47,21 +70,28 @@ public class DirectoryAddonsAdapterTest extends AndroidTestCase {
     private DirectoryAddonsAdapter mAdapter;
     private ActionHandler mActionHandler;
     private TestConfigStore mTestConfigStore;
+    private TestEnvironment mTestEnvironment;
 
+    @Rule public final OverrideFlagsRule mOverrideFlagsRule = new OverrideFlagsRule();
+
+    @Rule
+    public final CheckFlagsRule mCheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule();
+
+    @Before
     public void setUp() {
-
         mEnv = TestEnv.create(AUTHORITY);
         mActionHandler = new TestActionHandler();
         mEnv.clear();
         mTestConfigStore = new TestConfigStore();
 
-        final Context testContext = TestContext.createStorageTestContext(getContext(), AUTHORITY);
-        DocumentsAdapter.Environment env = new TestEnvironment(testContext, mEnv, mActionHandler);
+        final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        final Context testContext = TestContext.createStorageTestContext(context, AUTHORITY);
+        mTestEnvironment = new TestEnvironment(testContext, mEnv, mActionHandler);
 
         mAdapter = new DirectoryAddonsAdapter(
-                env,
+                mTestEnvironment,
                 new ModelBackedDocumentsAdapter(
-                        env,
+                        mTestEnvironment,
                         new IconHelper(testContext, State.MODE_GRID, /* maybeShowBadge= */ false,
                                 null, TestProvidersAccess.OtherUser.USER_ID, null,
                                 mTestConfigStore),
@@ -71,13 +101,15 @@ public class DirectoryAddonsAdapterTest extends AndroidTestCase {
     }
 
     // Tests that the item count is correct for a directory containing files and subdirs.
+    @Test
     public void testItemCount_mixed() {
-        mEnv.reset();  // creates a mix of folders and files for us.
+        mEnv.reset(); // creates a mix of folders and files for us.
 
         int expectedItemCount = mEnv.model.getItemCount() + (isUseMaterial3FlagEnabled() ? 0 : 1);
         assertEquals(expectedItemCount, mAdapter.getItemCount());
     }
 
+    @Test
     public void testGetPosition() {
         mEnv.model.createFolder("a");  // id will be "1"...derived from insert position.
         mEnv.model.createFile("b");  // id will be "2"
@@ -93,6 +125,7 @@ public class DirectoryAddonsAdapterTest extends AndroidTestCase {
     }
 
     // Tests that the item count is correct for a directory containing only subdirs.
+    @Test
     public void testItemCount_allDirs() {
         String[] names = {"Trader Joe's", "Alphabeta", "Lucky", "Vons", "Gelson's"};
         for (String name : names) {
@@ -103,6 +136,7 @@ public class DirectoryAddonsAdapterTest extends AndroidTestCase {
     }
 
     // Tests that the item count is correct for a directory containing only files.
+    @Test
     public void testItemCount_allFiles() {
         String[] names = {"123.txt", "234.jpg", "abc.pdf"};
         for (String name : names) {
@@ -112,6 +146,7 @@ public class DirectoryAddonsAdapterTest extends AndroidTestCase {
         assertEquals(mEnv.model.getItemCount(), mAdapter.getItemCount());
     }
 
+    @Test
     public void testAddsInfoMessage_WithDirectoryChildren() {
         String[] names = {"123.txt", "234.jpg", "abc.pdf"};
         for (String name : names) {
@@ -125,12 +160,14 @@ public class DirectoryAddonsAdapterTest extends AndroidTestCase {
         assertHolderType(0, DocumentsAdapter.ITEM_TYPE_HEADER_MESSAGE);
     }
 
+    @Test
     public void testItemCount_none() {
         mEnv.model.update();
         assertEquals(1, mAdapter.getItemCount());
         assertHolderType(0, DocumentsAdapter.ITEM_TYPE_INFLATED_MESSAGE);
     }
 
+    @Test
     public void testAddsInfoMessage_WithNoItem() {
         Bundle bundle = new Bundle();
         bundle.putString(DocumentsContract.EXTRA_INFO, "some info");
@@ -141,6 +178,7 @@ public class DirectoryAddonsAdapterTest extends AndroidTestCase {
         assertHolderType(0, DocumentsAdapter.ITEM_TYPE_HEADER_MESSAGE);
     }
 
+    @Test
     public void testAddsErrorMessage_WithNoItem() {
         Bundle bundle = new Bundle();
         bundle.putString(DocumentsContract.EXTRA_ERROR, "some error");
@@ -151,6 +189,7 @@ public class DirectoryAddonsAdapterTest extends AndroidTestCase {
         assertHolderType(0, DocumentsAdapter.ITEM_TYPE_HEADER_MESSAGE);
     }
 
+    @Test
     public void testOpenTreeMessage_shouldBlockChild() {
         if (!VersionUtils.isAtLeastR()) {
             return;
@@ -167,6 +206,7 @@ public class DirectoryAddonsAdapterTest extends AndroidTestCase {
         assertHolderType(0, DocumentsAdapter.ITEM_TYPE_HEADER_MESSAGE);
     }
 
+    @Test
     public void testOpenTreeMessage_normalChild() {
         mEnv.state.action = State.ACTION_OPEN_TREE;
         DocumentInfo info = new DocumentInfo();
@@ -178,6 +218,7 @@ public class DirectoryAddonsAdapterTest extends AndroidTestCase {
         assertHolderType(0, DocumentsAdapter.ITEM_TYPE_INFLATED_MESSAGE);
     }
 
+    @Test
     public void testOpenTreeMessage_restrictStorageAccessFalse_blockTreeChild() {
         if (!VersionUtils.isAtLeastR()) {
             return;
@@ -196,6 +237,113 @@ public class DirectoryAddonsAdapterTest extends AndroidTestCase {
 
     private void assertHolderType(int index, int type) {
         assertTrue(mAdapter.getItemViewType(index) == type);
+    }
+
+    @Test
+    @RequiresFlagsEnabled({FLAG_ENABLE_DOCUMENTS_TRASH_API})
+    @EnableFlags({Flags.FLAG_ENABLE_TRASH_FLOW_RO, Flags.FLAG_USE_MATERIAL3})
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    public void testAddsEmptyTrashBanner_OnTrashPage() {
+        mTestEnvironment.setIsOnTrashPage(true);
+        String[] names = {"123.txt", "234.jpg", "abc.pdf"};
+        for (String name : names) {
+            mEnv.model.createFile(name);
+        }
+
+        // Trigger an update to the model, which should refresh the adapter.
+        mEnv.model.update();
+
+        // Verify that the adapter now contains one extra item for the banner.
+        assertEquals(mEnv.model.getItemCount() + 1, mAdapter.getItemCount());
+        // Verify that the first item in the adapter is the header message (the banner).
+        assertHolderType(0, DocumentsAdapter.ITEM_TYPE_HEADER_MESSAGE);
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @EnableFlags({Flags.FLAG_CLOUD_FEATURES, Flags.FLAG_USE_MATERIAL3})
+    public void
+            testOnNetworkStateChanged_onRootWithLimitedFunctionalityWhenOffline_modifiesHeader() {
+        // Create a file to avoid the no items inflated message showing.
+        mEnv.model.createFile("a.txt");
+
+        // Start offline.
+        mTestEnvironment.setIsOnline(false);
+        // Set root that has limited functionality when offline.
+        ((TestModel) mTestEnvironment.getModel()).setHasLimitedFunctionalityWhenOffline(true);
+        mEnv.model.update();
+
+        // Check header is shown.
+        assertEquals(mEnv.model.getItemCount() + 1, mAdapter.getItemCount());
+        assertHolderType(0, DocumentsAdapter.ITEM_TYPE_HEADER_MESSAGE);
+
+        // Go online.
+        mTestEnvironment.setIsOnline(true);
+        mAdapter.getNetworkListener().onNetworkStateChanged(true);
+
+        // Check header is removed.
+        assertEquals(mEnv.model.getItemCount(), mAdapter.getItemCount());
+
+        // Go offline.
+        mTestEnvironment.setIsOnline(false);
+        mAdapter.getNetworkListener().onNetworkStateChanged(true);
+
+        // Check header is shown.
+        assertEquals(mEnv.model.getItemCount() + 1, mAdapter.getItemCount());
+        assertHolderType(0, DocumentsAdapter.ITEM_TYPE_HEADER_MESSAGE);
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @DisableFlags(Flags.FLAG_CLOUD_FEATURES)
+    public void testOnNetworkStateChanged_flagDisabled_doesNotShowHeader() {
+        // Create a file to avoid the no items inflated message showing.
+        mEnv.model.createFile("a.txt");
+
+        mTestEnvironment.setIsOnline(false);
+        // Set root that has limited functionality when offline.
+        ((TestModel) mTestEnvironment.getModel()).setHasLimitedFunctionalityWhenOffline(true);
+
+        // Clear any default messages set by the model update
+        mEnv.model.update();
+
+        // Check header is not shown.
+        assertEquals(mEnv.model.getItemCount(), mAdapter.getItemCount());
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
+    @RequiresFlagsEnabled({FLAG_ENABLE_SYNC_STATE})
+    @EnableFlags({Flags.FLAG_CLOUD_FEATURES, Flags.FLAG_USE_MATERIAL3})
+    public void testUpdate_toRootWithoutLimitedFunctionalityWhenOffline_removesHeader() {
+        // Create a file to avoid the no items inflated message showing.
+        mEnv.model.createFile("a.txt");
+
+        mTestEnvironment.setIsOnline(false);
+        // Start with root that has limited functionality when offline.
+        ((TestModel) mTestEnvironment.getModel()).setHasLimitedFunctionalityWhenOffline(true);
+        mEnv.model.update();
+
+        // Check header is shown.
+        assertEquals(mEnv.model.getItemCount() + 1, mAdapter.getItemCount());
+        assertHolderType(0, DocumentsAdapter.ITEM_TYPE_HEADER_MESSAGE);
+
+        // Move to root that doesn't have limited functionality when offline.
+        ((TestModel) mTestEnvironment.getModel()).setHasLimitedFunctionalityWhenOffline(false);
+
+        // Send a model notification.
+        mEnv.model.update();
+
+        // Check header is hidden.
+        assertEquals(mEnv.model.getItemCount(), mAdapter.getItemCount());
+
+        // Send a network notification.
+        mAdapter.getNetworkListener().onNetworkStateChanged(false);
+
+        // Check header is still hidden.
+        assertEquals(mEnv.model.getItemCount(), mAdapter.getItemCount());
     }
 
     private static class StubAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {

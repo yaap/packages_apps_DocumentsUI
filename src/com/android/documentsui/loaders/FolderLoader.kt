@@ -33,37 +33,38 @@ import com.android.documentsui.base.DocumentInfo
 import com.android.documentsui.base.FilteringCursorWrapper
 import com.android.documentsui.base.Lookup
 import com.android.documentsui.base.RootInfo
+import com.android.documentsui.base.SharedMinimal.redact
 import com.android.documentsui.sorting.SortModel
+import com.android.documentsui.util.FlagUtils.Companion.isSyncStateEnabled
 
 /**
- * A specialization of the BaseFileLoader that loads the children of a single folder. To list
- * a directory you need to provide:
+ * A specialization of the BaseFileLoader that loads the children of a single folder. To list a
+ * directory you need to provide:
+ * - The current application context
+ * - A content lock for which a locking content observer is built
+ * - A list of user IDs on behalf of which the search is conducted
+ * - The root info of the listed directory
+ * - The document info of the listed directory, may be null.
+ * - a lookup from file extension to file type
+ * - The model capable of sorting results
  *
- *  - The current application context
- *  - A content lock for which a locking content observer is built
- *  - A list of user IDs on behalf of which the search is conducted
- *  - The root info of the listed directory
- *  - The document info of the listed directory, may be null.
- *  - a lookup from file extension to file type
- *  - The model capable of sorting results
- *
- *  Typically, here we expect mListedDir to be not null, as this is the directory we are listing.
- *  However, when profile is switched while using the app as a file picker, it is possible that
- *  the listing directory is null. If this is the case, we assume that we should be listing the
- *  location specified by the mRoot.
+ * Typically, here we expect mListedDir to be not null, as this is the directory we are listing.
+ * However, when profile is switched while using the app as a file picker, it is possible that the
+ * listing directory is null. If this is the case, we assume that we should be listing the location
+ * specified by the mRoot.
  */
 class FolderLoader(
     context: Context,
     mimeTypeLookup: Lookup<String, String>,
     contentLock: ContentLock,
-    private val mRoot: RootInfo,
-    private val mListedDir: DocumentInfo?,
-    private val mOptions: QueryOptions,
-    private val mSortModel: SortModel,
+    private val root: RootInfo,
+    private val listedDir: DocumentInfo?,
+    private val options: QueryOptions,
+    private val sortModel: SortModel,
 ) : BaseFileLoader(context, mimeTypeLookup) {
 
     // An observer registered on the cursor to force a reload if the cursor reports a change.
-    private val mObserver = LockingContentObserver(contentLock, this::onContentChanged)
+    private val observer = LockingContentObserver(contentLock, this::onContentChanged)
 
     // Creates a directory result object corresponding to the current parameters of the loader.
     override fun loadInBackground(): DirectoryResult? {
@@ -82,33 +83,23 @@ class FolderLoader(
             }
             cancelNotifier = CancellationSignal()
         }
-        val rejectBeforeTimestamp = mOptions.getRejectBeforeTimestamp()
+        val rejectBeforeTimestamp = options.getRejectBeforeTimestamp()
         val folderChildrenUri =
-            if (mListedDir == null) {
-                DocumentsContract.buildChildDocumentsUri(
-                    mRoot.authority,
-                    mRoot.documentId
-                )
+            if (listedDir == null) {
+                DocumentsContract.buildChildDocumentsUri(root.authority, root.documentId)
             } else {
-                DocumentsContract.buildChildDocumentsUri(
-                    mListedDir.authority,
-                    mListedDir.documentId
-                )
+                DocumentsContract.buildChildDocumentsUri(listedDir.authority, listedDir.documentId)
             }
         val result = DirectoryResult()
+        result.queryOptions = options
         // If we are listing an archive, in the current approach, we cache the client as part of
         // DirectoryResult. This way, when the loader is closed, we can close the archive client.
-        if (mListedDir != null && mListedDir.isInArchive) {
+        if (listedDir != null && listedDir.isInArchive) {
             result.setClient(openArchive(folderChildrenUri))
         }
         var cursor: Cursor? = null
         try {
-            cursor = queryLocation(
-                mRoot,
-                folderChildrenUri,
-                mOptions.otherQueryArgs,
-                ALL_RESULTS
-            )
+            cursor = queryLocation(root, folderChildrenUri, options.otherQueryArgs)
         } catch (e: Exception) {
             result.exception = e
         } finally {
@@ -118,38 +109,42 @@ class FolderLoader(
             cursor = emptyCursor()
             result.setClient(null)
         }
-        cursor.registerContentObserver(mObserver)
+        cursor.registerContentObserver(observer)
 
         val filteredCursor = FilteringCursorWrapper(cursor)
-        filteredCursor.filterHiddenFiles(mOptions.showHidden)
-        filteredCursor.filterMimes(mOptions.acceptableMimeTypes, null)
+        filteredCursor.filterHiddenFiles(options.showHidden)
+        filteredCursor.filterMimes(computeAcceptableMimeTypes(options), null)
         if (rejectBeforeTimestamp > 0L) {
             filteredCursor.filterLastModified(rejectBeforeTimestamp)
         }
-        // TODO(b:380945065): Add filtering by category, such as images, audio, video.
-        val sortedCursor = mSortModel.sortCursor(filteredCursor, mimeTypeLookup)
+        val sortedCursor = sortModel.sortCursor(filteredCursor, mimeTypeLookup)
 
-        result.doc = mListedDir ?: DocumentInfo()
+        result.doc = listedDir ?: DocumentInfo()
         result.cursor = sortedCursor
+        if (isSyncStateEnabled()) {
+            // Set if this is a root that has limited functionality when offline.
+            result.hasLimitedFunctionalityWhenOffline = root.hasLimitedFunctionalityWhenOffline()
+        }
         return result
     }
 
     /**
-     * Helper function that attempts to open an archive and return a long lasting content provider
-     * client to the soon to be scanned archive. This must be done before attempting to acquire the
+     * Helper function that attempts to open an archive and return a long-lasting content provider
+     * client to the soon-to-be scanned archive. This must be done before attempting to acquire the
      * cursor, as we depend on archive content to be read (see acquireArchive method).
      */
     private fun openArchive(folderChildrenUri: Uri): ContentProviderClient? {
-        // If we are opening an archive, we need, in the current approach, to have a long lived
+        // If we are opening an archive, we need, in the current approach, to have a long-lived
         // ContentProviderClient for it. This is so that the archive can be closed, once the
         // loader results are closed.
         var client: ContentProviderClient? = null
         try {
-            val resolver = mRoot.userId.getContentResolver(context)
+            val resolver = root.userId.getContentResolver(context)
             client = resolver.acquireUnstableContentProviderClient(folderChildrenUri.authority!!)
             ArchivesProvider.acquireArchive(client, folderChildrenUri)
+            debugLog("Acquired archive ${redact(folderChildrenUri)}")
         } catch (e: RemoteException) {
-            Log.e(TAG, "Failed to acquire archive client", e)
+            Log.e(TAG, "Cannot acquire archive ${redact(folderChildrenUri)}", e)
             client?.close()
         }
         return client

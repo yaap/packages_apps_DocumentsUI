@@ -16,7 +16,9 @@
 
 package com.android.documentsui.util
 
+import android.content.flags.Flags.enableContentProviderClientAnrOnCancel
 import android.provider.Flags.enableDocumentsTrashApi
+import android.provider.Flags.enableSyncState
 import android.util.Log
 import com.android.documentsui.flags.Flags
 import com.android.modules.utils.build.SdkLevel
@@ -29,6 +31,7 @@ private constructor(private val overrides: MutableMap<String, Boolean> = mutable
         @Volatile private var instance: FlagUtils = FlagUtils()
         private val overridableFlags =
             listOf(
+                Flags.FLAG_CLOUD_FEATURES,
                 Flags.FLAG_DESKTOP_FILE_HANDLING_RO,
                 Flags.FLAG_DESKTOP_UX_PHASE_2_RO,
                 Flags.FLAG_ENABLE_TRASH_FLOW_RO,
@@ -41,6 +44,14 @@ private constructor(private val overrides: MutableMap<String, Boolean> = mutable
                 Flags.FLAG_VISUAL_SIGNALS_RO,
                 Flags.FLAG_ZIP_NG_RO,
                 Flags.FLAG_HOME_SCREEN_FILES_RO,
+                Flags.FLAG_USE_FILE_SUMMARY,
+                Flags.FLAG_USE_LOCAL_SEARCH_PROVIDER,
+                Flags.FLAG_USE_ALLFILES_ROOT_FOR_RECENTS,
+                Flags.FLAG_DRAGS_FROM_OTHER_APPS,
+                Flags.FLAG_USE_APPROVED_DOCUMENT_HANDLER,
+                Flags.FLAG_USE_NEW_OPEN_WITH,
+                Flags.FLAG_GET_INFO_DIALOG,
+                Flags.FLAG_INCLUDE_REMOTE_ROOTS_IN_RECENTS,
             )
 
         @JvmStatic
@@ -71,6 +82,13 @@ private constructor(private val overrides: MutableMap<String, Boolean> = mutable
                     .overrides
                     .getOrDefault(Flags.FLAG_USE_SEARCH_V2_READ_ONLY, Flags.useSearchV2ReadOnly())
             return flag && isUseMaterial3FlagEnabled()
+        }
+
+        @JvmStatic
+        private fun isCloudFeaturesFlagEnabled(): Boolean {
+            return getInstance()
+                .overrides
+                .getOrDefault(Flags.FLAG_CLOUD_FEATURES, Flags.cloudFeatures())
         }
 
         @JvmStatic
@@ -114,24 +132,57 @@ private constructor(private val overrides: MutableMap<String, Boolean> = mutable
 
         @JvmStatic
         fun isTrashFlowEnabled(): Boolean {
-            // Check if the platform SDK is newer than Android Baklava (SDK 36).
-            // The Trash feature relies on DocumentsContract APIs introduced in the
-            // Android release after Baklava.
-            // This specific Trash feature is NOT backward compatible with platforms
-            // at or below Baklava because the required APIs are missing.
-            // This check ensures the feature is only considered enabled on
-            // supported platform versions, preventing runtime errors if the module
-            // runs on an older base OS.
-            if (!VersionUtils.isGreaterThanB()) {
+            // TODO(b/457843307): Replace with isAtLeastC when the new SDK is finalised.
+            if (!SdkLevel.isAtLeastB()) {
                 return false
             }
+
             // If API flag is not enabled, then trash flow will be disabled
             if (!enableDocumentsTrashApi()) {
                 return false
             }
+
+            // Trash feature will be available only when use_material_3 flag is enabled
+            if (!isUseMaterial3FlagEnabled()) {
+                return false
+            }
+
             return getInstance()
                 .overrides
                 .getOrDefault(Flags.FLAG_ENABLE_TRASH_FLOW_RO, Flags.enableTrashFlowRo())
+        }
+
+        @JvmStatic
+        fun isSyncStateEnabled(): Boolean {
+            // An SDK check shouldn't be required (go/android-api-flagging-faq#api-finalization)
+            // because enableSyncState() should default to false when it doesn't exist on the
+            // current SDK version on the device. However, this doesn't work on Android U
+            // (API level 34) and a NoSuchMethodError will be thrown if enableSyncState() is called.
+            // This sync state API is targeting API level 37, however the version bump hasn't
+            // occurred yet so guard to ensure that the API level is at least 36 (Android B).
+            // TODO(b/458129770): Replace with isAtLeastC when the new SDK is finalised.
+            if (!SdkLevel.isAtLeastB()) {
+                Log.w(TAG, "SDK version is too low for the sync state feature")
+                return false
+            }
+
+            // The API flag that guards the static sync state constants needs to be enabled. If this
+            // function doesn't exist on the current SDK version on the device, it will default to
+            // false (on Android versions that are not U).
+            // TODO(b/469214605): After API 37 finalisation, guard with SDK version instead of
+            // enableSyncState.
+            if (!enableSyncState()) {
+                Log.w(TAG, "enableSyncState() returns false")
+                return false
+            }
+
+            // The use_material_3 flag needs to be enabled.
+            if (!isUseMaterial3FlagEnabled()) {
+                return false
+            }
+
+            // The cloud_features flag needs to be enabled.
+            return isCloudFeaturesFlagEnabled()
         }
 
         @JvmStatic
@@ -147,11 +198,98 @@ private constructor(private val overrides: MutableMap<String, Boolean> = mutable
 
         @JvmStatic
         fun isHomeScreenFilesFlagEnabled(): Boolean {
-            val flag =
+            return isUseMaterial3FlagEnabled() &&
                 getInstance()
                     .overrides
                     .getOrDefault(Flags.FLAG_HOME_SCREEN_FILES_RO, Flags.homeScreenFilesRo())
+        }
+
+        @JvmStatic
+        fun isUseFileSummaryEnabled(): Boolean {
+            return isUseMaterial3FlagEnabled() &&
+                getInstance()
+                    .overrides
+                    .getOrDefault(Flags.FLAG_USE_FILE_SUMMARY, Flags.useFileSummary())
+        }
+
+        @JvmStatic
+        fun isUseLocalSearchProviderEnabled(): Boolean {
+            val flag =
+                getInstance()
+                    .overrides
+                    .getOrDefault(
+                        Flags.FLAG_USE_LOCAL_SEARCH_PROVIDER,
+                        Flags.useLocalSearchProvider(),
+                    )
+            return flag && isSearchV2Enabled()
+        }
+
+        @JvmStatic
+        fun isUseAllfilesRootForRecentsEnabled(): Boolean {
+            val flag =
+                getInstance()
+                    .overrides
+                    .getOrDefault(
+                        Flags.FLAG_USE_ALLFILES_ROOT_FOR_RECENTS,
+                        Flags.useAllfilesRootForRecents(),
+                    )
+            return flag && isSearchV2Enabled()
+        }
+
+        @JvmStatic
+        fun isDragsFromOtherAppsEnabled(): Boolean {
+            return getInstance()
+                .overrides
+                .getOrDefault(Flags.FLAG_DRAGS_FROM_OTHER_APPS, Flags.dragsFromOtherApps())
+        }
+
+        @JvmStatic
+        fun isUseApprovedDocumentHandlerEnabled(): Boolean {
+            val flag =
+                getInstance()
+                    .overrides
+                    .getOrDefault(
+                        Flags.FLAG_USE_APPROVED_DOCUMENT_HANDLER,
+                        Flags.useApprovedDocumentHandler(),
+                    )
             return flag && isUseMaterial3FlagEnabled()
+        }
+
+        @JvmStatic
+        fun isUseNewOpenWithEnabled(): Boolean {
+            val flag =
+                getInstance()
+                    .overrides
+                    .getOrDefault(Flags.FLAG_USE_NEW_OPEN_WITH, Flags.useNewOpenWith())
+            return flag && isDesktopFileHandlingFlagEnabled()
+        }
+
+        @JvmStatic
+        fun isGetInfoDialogEnabled(): Boolean {
+            val flag =
+                getInstance()
+                    .overrides
+                    .getOrDefault(Flags.FLAG_GET_INFO_DIALOG, Flags.getInfoDialog())
+            return flag && isUseMaterial3FlagEnabled()
+        }
+
+        @JvmStatic
+        fun isContentProviderClientAnrOnCancelEnabled(): Boolean {
+            // TODO(b/457843307): Replace with isAtLeastC when the new SDK is
+            // finalised.
+            return SdkLevel.isAtLeastB() && enableContentProviderClientAnrOnCancel()
+        }
+
+        @JvmStatic
+        fun isIncludeRemoteRootsInRecentsEnabled(): Boolean {
+            val flag =
+                getInstance()
+                    .overrides
+                    .getOrDefault(
+                        Flags.FLAG_INCLUDE_REMOTE_ROOTS_IN_RECENTS,
+                        Flags.includeRemoteRootsInRecents(),
+                    )
+            return flag && isSearchV2Enabled()
         }
     }
 

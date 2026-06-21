@@ -25,14 +25,16 @@ import android.platform.test.annotations.EnableFlags
 import android.platform.test.annotations.RequiresFlagsEnabled
 import android.platform.test.flag.junit.CheckFlagsRule
 import android.platform.test.flag.junit.DeviceFlagsValueProvider
-import android.provider.DocumentsContract.buildDocumentUri
 import android.provider.Flags.FLAG_ENABLE_DOCUMENTS_TRASH_API
 import androidx.test.filters.MediumTest
 import androidx.test.filters.SdkSuppress
 import com.android.documentsui.TrashDocumentHelper
+import com.android.documentsui.base.DocumentStack
 import com.android.documentsui.flags.Flags
 import com.android.documentsui.rules.OverrideFlagsRule
 import com.android.documentsui.services.FileOperationService.OPERATION_RESTORE
+import com.android.documentsui.testing.DocsProviders
+import com.android.documentsui.testing.TestProvidersAccess
 import com.android.documentsui.util.VersionUtils
 import com.google.common.truth.Truth.assertThat
 import org.junit.Assume.assumeTrue
@@ -55,6 +57,7 @@ import org.junit.Test
  */
 @MediumTest
 @RequiresFlagsEnabled(FLAG_ENABLE_DOCUMENTS_TRASH_API)
+@EnableFlags(Flags.FLAG_USE_MATERIAL3, Flags.FLAG_ENABLE_TRASH_FLOW_RO)
 @SdkSuppress(minSdkVersion = Build.VERSION_CODES.BAKLAVA, codeName = "B")
 internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
     @get:Rule val setFlags = OverrideFlagsRule()
@@ -62,14 +65,8 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
     @get:Rule val checkFlagsRule: CheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule()
 
     override fun setUp() {
-        // Skip test if the platform SDK is not newer than Android Baklava (SDK 36).
-        // The Trash feature under test relies on DocumentsContract APIs introduced in the
-        // Android release after Baklava (SDK 36).
-        // As DocumentsUI is a Mainline module, it's subject to MTS testing, which runs on
-        // older Android base builds to verify backward compatibility. However, this specific
-        // Trash feature lacks backward compatibility with platforms at or below Baklava.
-        // This assumption prevents failures when the test runs on an older base OS
-        // without the necessary APIs.
+        // TODO(b/457843307): Verify after the SDK is finalized. This test depends on StubProvider,
+        //  which currently encounters a NoSuchMethodError when the platform flag is used.
         assumeTrue(VersionUtils.isGreaterThanB())
         super.setUp()
     }
@@ -79,7 +76,6 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
      * and that the parent directories within the trash are removed.
      */
     @Test
-    @EnableFlags(Flags.FLAG_ENABLE_TRASH_FLOW_RO)
     fun testRestoreSingleFile() {
         val trashStorageDir = mDocs.createFolder(mSrcRoot, TrashDocumentHelper.TRASH_LOCATION)
         val testDirUri = mDocs.createFolder(trashStorageDir, "testDir")
@@ -103,7 +99,8 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Restoring .trashed-12345-document.txt")
+            assertThat(filename).isEqualTo("document.txt")
+            assertThat(numFiles).isEqualTo(1)
         }
 
         // Verify filesystem changes: trash is empty, and the file is restored to the source root.
@@ -121,7 +118,6 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
      * moved to their original location and the trash directory is cleaned up.
      */
     @Test
-    @EnableFlags(Flags.FLAG_ENABLE_TRASH_FLOW_RO)
     fun testRestoreMultipleFiles() {
         // Create a trash directory and place two trashed files inside a subdirectory
         val trashStorageDir = mDocs.createFolder(mSrcRoot, TrashDocumentHelper.TRASH_LOCATION)
@@ -148,7 +144,7 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Restoring 2 files")
+            assertThat(numFiles).isEqualTo(2)
         }
 
         // Verify filesystem changes: trash is empty, files are in the source root
@@ -168,7 +164,6 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
      * moved back to the original location.
      */
     @Test
-    @EnableFlags(Flags.FLAG_ENABLE_TRASH_FLOW_RO)
     fun testRestoreFolder() {
         // Create a trash directory, then create a folder with two files inside it.
         val trashStorageDir = mDocs.createFolder(mSrcRoot, TrashDocumentHelper.TRASH_LOCATION)
@@ -197,7 +192,8 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Restoring .trashed-12345-dir1")
+            assertThat(filename).isEqualTo("dir1")
+            assertThat(numFiles).isEqualTo(1)
         }
 
         // Verify the changes: trash should be empty, and the folder should be restored.
@@ -217,7 +213,6 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
      * generated.
      */
     @Test
-    @EnableFlags(Flags.FLAG_ENABLE_TRASH_FLOW_RO)
     fun testRestoreFailsForNonTrashedFile() {
         // Create a document in the source root. Attempting to restore a file that isn't
         // in the trash directory should cause a failure.
@@ -247,7 +242,7 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
         with(job.failureNotification) {
             assertThat(category).isEqualTo(CATEGORY_ERROR)
             with(extras) {
-                assertThat(getCharSequence(EXTRA_TITLE)).isEqualTo("Couldn’t restore 1 item")
+                assertThat(getCharSequence(EXTRA_TITLE)).isEqualTo("Couldn’t restore 1 file")
                 assertThat(getCharSequence(EXTRA_TEXT)).isEqualTo("Tap to view details")
             }
         }
@@ -259,7 +254,6 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
      * prefix).
      */
     @Test
-    @EnableFlags(Flags.FLAG_ENABLE_TRASH_FLOW_RO)
     fun testRestoreFailsForImproperlyNamedFileInTrash() {
         // Create a file directly in the trash directory without the ".trashed-" prefix.
         // The restore operation should fail because it's not a valid trashed file.
@@ -290,7 +284,7 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
         with(job.failureNotification) {
             assertThat(category).isEqualTo(CATEGORY_ERROR)
             with(extras) {
-                assertThat(getCharSequence(EXTRA_TITLE)).isEqualTo("Couldn’t restore 1 item")
+                assertThat(getCharSequence(EXTRA_TITLE)).isEqualTo("Couldn’t restore 1 file")
                 assertThat(getCharSequence(EXTRA_TEXT)).isEqualTo("Tap to view details")
             }
         }
@@ -302,7 +296,6 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
      * throws an exception, which is then caught and handled to prevent the app from crashing.
      */
     @Test
-    @EnableFlags(Flags.FLAG_ENABLE_TRASH_FLOW_RO)
     fun testRestoreFailsWhenFileAlreadyExistsAtDestination() {
         // Setup: Create a directory structure in the trash and add a trashed file to it.
         val trashStorageDir = mDocs.createFolder(mSrcRoot, TrashDocumentHelper.TRASH_LOCATION)
@@ -340,7 +333,7 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
         with(job.failureNotification) {
             assertThat(category).isEqualTo(CATEGORY_ERROR)
             with(extras) {
-                assertThat(getCharSequence(EXTRA_TITLE)).isEqualTo("Couldn’t restore 1 item")
+                assertThat(getCharSequence(EXTRA_TITLE)).isEqualTo("Couldn’t restore 1 file")
                 assertThat(getCharSequence(EXTRA_TEXT)).isEqualTo("Tap to view details")
             }
         }
@@ -349,15 +342,23 @@ internal class RestoreJobTest : AbstractJobTest<TrashJob>() {
     /**
      * Creates a test job to restore files from the trash.
      *
-     * @param src A list of URIs for the files to restore.
+     * @param srcs A list of URIs for the files to restore.
      * @return A new RestoreJob instance.
      */
-    private fun createRestoreJob(src: List<Uri>): RestoreJob {
-        // Set the destination for the restored files to always be the root directory.
-        val dest = buildDocumentUri(AUTHORITY, mSrcRoot.documentId)
+    private fun createRestoreJob(srcs: List<Uri>): RestoreJob {
+        // When a user is on the trash page and  perform a restore action either via action menu,
+        // context menu or shortcut, the currentStack is the trash root.
+        val currentStack = DocumentStack(TestProvidersAccess.TRASH_ROOT)
 
         // Create and return the RestoreJob.
-        return createJob(OPERATION_RESTORE, src, dest, dest) as RestoreJob
+        val urisSupplier = DocsProviders.createDocsProvider(srcs)
+        val operation =
+            FileOperation.Builder()
+                .withOpType(OPERATION_RESTORE)
+                .withSrcs(urisSupplier)
+                .withDestination(currentStack)
+                .build()
+        return createJob(operation) as RestoreJob
     }
 
     companion object {

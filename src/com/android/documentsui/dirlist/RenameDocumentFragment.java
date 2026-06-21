@@ -17,6 +17,9 @@
 package com.android.documentsui.dirlist;
 
 import static com.android.documentsui.base.SharedMinimal.TAG;
+import static com.android.documentsui.util.FileUtils.getFirstInvalidCharIndex;
+import static com.android.documentsui.util.FileUtils.sanitizeFileName;
+import static com.android.documentsui.util.FlagUtils.isUseMaterial3FlagEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.app.Dialog;
@@ -24,6 +27,8 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -36,23 +41,22 @@ import android.widget.TextView.OnEditorActionListener;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
-import androidx.fragment.app.DialogFragment;
 import androidx.fragment.app.FragmentManager;
 
 import com.android.documentsui.BaseActivity;
+import com.android.documentsui.DocumentsUIDialogFragment;
 import com.android.documentsui.Metrics;
 import com.android.documentsui.R;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.Shared;
 import com.android.documentsui.ui.Snackbars;
+import com.android.documentsui.util.FileUtils;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputLayout;
 
-/**
- * Dialog to rename file or directory.
- */
-public class RenameDocumentFragment extends DialogFragment {
+/** Dialog to rename file or directory. */
+public class RenameDocumentFragment extends DocumentsUIDialogFragment {
     private static final String TAG_RENAME_DOCUMENT = "rename_document";
     private DocumentInfo mDocument;
     private EditText mEditText;
@@ -96,6 +100,41 @@ public class RenameDocumentFragment extends DialogFragment {
 
         // Workaround for the problem - virtual keyboard doesn't show on the phone.
         Shared.ensureKeyboardPresent(context, dialog);
+
+        if (isUseMaterial3FlagEnabled()) {
+            mEditText.addTextChangedListener(
+                    new TextWatcher() {
+                        @Override
+                        public void beforeTextChanged(
+                                CharSequence s, int start, int count, int after) {}
+
+                        @Override
+                        public void onTextChanged(
+                                CharSequence s, int start, int before, int count) {}
+
+                        @Override
+                        public void afterTextChanged(Editable s) {
+                            // Clear any previous errors
+                            mRenameInputWrapper.setError(null);
+                            mRenameInputWrapper.setHelperText(null);
+                            if (s.toString().startsWith(".")) {
+                                mRenameInputWrapper.setHelperText(
+                                    getContext()
+                                        .getString(
+                                            getRes(R.string.hidden_file_rename_warning)));
+                            } else {
+                                int invalidCharIdx = getFirstInvalidCharIndex(s.toString());
+                                if (invalidCharIdx == -1) {
+                                    return;
+                                }
+                                mRenameInputWrapper.setHelperText(
+                                    getContext()
+                                        .getString(getRes(R.string.rename_invalid_character))
+                                        + s.toString().charAt(invalidCharIdx));
+                            }
+                        }
+                    });
+        }
 
         mEditText.setOnEditorActionListener(
                 new OnEditorActionListener() {
@@ -180,13 +219,20 @@ public class RenameDocumentFragment extends DialogFragment {
     }
 
     private void renameDocuments(String newDisplayName) {
+        if (newDisplayName == null) {
+            return;
+        }
         BaseActivity activity = (BaseActivity) getActivity();
+
+        try {
+            newDisplayName = sanitizeFileName(newDisplayName);
+        } catch (FileUtils.InvalidNameError error) {
+            mRenameInputWrapper.setError(error.getTranslatedError(getContext()));
+            return;
+        }
 
         if (newDisplayName.equals(mDocument.displayName)) {
             mDialog.dismiss();
-        } else if (newDisplayName.isEmpty()) {
-            mRenameInputWrapper.setError(
-                    getContext().getString(getRes(R.string.missing_rename_error)));
         } else if (activity.getInjector().getModel().hasFileWithName(newDisplayName)) {
             mRenameInputWrapper.setError(getContext().getString(getRes(R.string.name_conflict)));
             selectFileName(mEditText);
@@ -197,7 +243,6 @@ public class RenameDocumentFragment extends DialogFragment {
             }
             activity.getInjector().selectionMgr.clearSelection();
         }
-
     }
 
     private class RenameDocumentsTask extends AsyncTask<DocumentInfo, Void, DocumentInfo> {

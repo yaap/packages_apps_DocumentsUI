@@ -18,25 +18,20 @@ package com.android.documentsui.services;
 
 import static android.os.SystemClock.uptimeMillis;
 
+import static com.android.documentsui.base.Providers.isArchiveUri;
 import static com.android.documentsui.base.SharedMinimal.DEBUG;
 import static com.android.documentsui.util.FlagUtils.isVisualSignalsFlagEnabled;
-import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.content.ContentResolver;
 import android.content.Context;
-import android.icu.text.MessageFormat;
 import android.net.Uri;
 import android.os.RemoteException;
-import android.text.BidiFormatter;
 import android.util.Log;
-
-import androidx.annotation.NonNull;
 
 import com.android.documentsui.archives.ArchivesProvider;
 import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.DocumentStack;
 import com.android.documentsui.base.Features;
-import com.android.documentsui.base.RootInfo;
 import com.android.documentsui.base.UserId;
 import com.android.documentsui.clipping.UrisSupplier;
 import com.android.documentsui.services.FileOperationService.OpType;
@@ -45,10 +40,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 
 /**
  * Abstract job that resolves all resource URIs into mResolvedDocs. This provides
@@ -73,11 +65,22 @@ public abstract class ResolvedResourcesJob extends Job {
         // Delay the initialization of it to setUp() because it may be IO extensive.
         mResolvedDocs = Collections.synchronizedList(new ArrayList<>(srcs.getItemCount()));
 
-        if (isVisualSignalsFlagEnabled() && srcs.getItemCount() == 1) {
-            // Prebuild the document list so we can get the filename for a single file progress
-            // message. With a single file only, this should not be IO intensive.
-            buildDocumentList();
+        if (!isVisualSignalsFlagEnabled()) return;
+        if (srcs.getItemCount() != 1) return;
+
+        try {
+            for (Uri uri : mResourceUris.getUris(appContext)) {
+                if (isArchiveUri(uri)) return;
+            }
+        } catch (IOException e) {
+            Log.e(TAG, "Cannot get URIs", e);
+            return;
         }
+
+        // Prebuild the document list so we can get the filename for a single file progress
+        // message. With a single file only, and when this file is not located in an archive,
+        // this should not be IO intensive.
+        buildDocumentList();
     }
 
     boolean setUp() {
@@ -90,7 +93,7 @@ public abstract class ResolvedResourcesJob extends Job {
             Iterable<Uri> uris = mResourceUris.getUris(appContext);
             for (Uri uri : uris) {
                 try {
-                    if (ArchivesProvider.AUTHORITY.equals(uri.getAuthority())) {
+                    if (isArchiveUri(uri)) {
                         ArchivesProvider.acquireArchive(getClient(uri), uri);
                         mAcquiredArchivedUris.add(uri);
                     }
@@ -135,14 +138,6 @@ public abstract class ResolvedResourcesJob extends Job {
     }
 
     /**
-     * Allows sub-classes to exclude files from processing.
-     * By default all files are eligible.
-     */
-    boolean isEligibleDoc(DocumentInfo doc, RootInfo root) {
-        return true;
-    }
-
-    /**
      * @return number of docs successfully loaded.
      */
     private int buildDocumentList() {
@@ -168,11 +163,7 @@ public abstract class ResolvedResourcesJob extends Job {
                 continue;
             }
 
-            if (isEligibleDoc(doc, stack.getRoot())) {
-                mResolvedDocs.add(doc);
-            } else {
-                onFileFailed(doc);
-            }
+            mResolvedDocs.add(doc);
             docsLoaded++;
 
             if (isCanceled()) {
@@ -202,25 +193,11 @@ public abstract class ResolvedResourcesJob extends Job {
         return mResolvedDocs.size();
     }
 
-    protected String getProgressMessage(int stringId, @NonNull Map<String, Object> formatArgs) {
-        final int n = mResourceUris.getItemCount();
-        formatArgs.put("count", n);
-
-        if (n == 1) {
-            String name;
-            try {
-                name = mResolvedDocs.get(0).displayName;
-            } catch (IndexOutOfBoundsException ignored) {
-                name = "";
-            }
-            formatArgs.put("filename", BidiFormatter.getInstance().unicodeWrap(name));
+    protected String getFilename() {
+        try {
+            return mResolvedDocs.get(0).displayName;
+        } catch (IndexOutOfBoundsException ignored) {
+            return "";
         }
-
-        return new MessageFormat(service.getString(getRes(stringId)), Locale.getDefault()).format(
-                formatArgs);
-    }
-
-    protected String getProgressMessage(int stringId) {
-        return getProgressMessage(stringId, new HashMap<>());
     }
 }

@@ -24,12 +24,18 @@ import static android.provider.DocumentsContract.buildRootsUri;
 import static androidx.core.util.Preconditions.checkArgument;
 
 import static com.android.documentsui.base.DocumentInfo.getCursorString;
+import static com.android.documentsui.base.Providers.AUTHORITY_DOWNLOADS;
+import static com.android.documentsui.base.Providers.AUTHORITY_STORAGE;
+import static com.android.documentsui.base.Providers.ROOT_ID_DEVICE;
 
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertNotNull;
 import static junit.framework.Assert.fail;
 
+import static org.junit.Assert.assertTrue;
+
 import android.content.ContentProviderClient;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
@@ -53,9 +59,9 @@ import com.android.documentsui.base.RootInfo;
 import com.android.documentsui.base.UserId;
 import com.android.documentsui.roots.RootCursorWrapper;
 
-import com.google.common.collect.Lists;
-
 import libcore.io.Streams;
+
+import com.google.common.collect.Lists;
 
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
@@ -63,7 +69,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Provides support for creation of documents in a test settings.
@@ -73,13 +81,54 @@ public class DocumentsProviderHelper {
 
     private final UserId mUserId;
     private final String mAuthority;
+    private final Boolean mRootHasLimitedFunctionalityWhenOffline;
     private final ContentProviderClient mClient;
 
+    /** A helper constructor for local/internal storage (primary root) with the Download folder. */
+    public static DocumentsProviderHelper setupStorageAuthorityDocsHelper(Context context)
+            throws Exception {
+        // Create DocumentsProviderHelper to create files in Internal storage.
+        DocumentsProviderHelper storageDocsHelper =
+                new DocumentsProviderHelper(
+                        UserId.DEFAULT_USER, AUTHORITY_STORAGE, context, AUTHORITY_STORAGE);
+        RootInfo primaryRoot = storageDocsHelper.getRoot(ROOT_ID_DEVICE);
+
+        // Create Download folder if it doesn't exist.
+        DocumentInfo info = storageDocsHelper.findFile(primaryRoot.documentId, "Download");
+
+        if (info == null) {
+            ContentResolver cr = context.getContentResolver();
+            Uri uri = storageDocsHelper.createFolder(primaryRoot.documentId, "Download");
+            info = DocumentInfo.fromUri(cr, uri, UserId.DEFAULT_USER);
+        }
+
+        assertTrue(info != null && info.isDirectory());
+        return storageDocsHelper;
+    }
+
+    /** Initializes a helper for the Downloads authority. */
+    public static DocumentsProviderHelper setupDownloadsAuthorityDocsHelper(Context context)
+            throws Exception {
+        return new DocumentsProviderHelper(
+                UserId.DEFAULT_USER, AUTHORITY_DOWNLOADS, context, AUTHORITY_DOWNLOADS);
+    }
+
     public DocumentsProviderHelper(UserId userId, String authority, Context context, String name) {
+        this(userId, authority, context, name, /* rootHasLimitedFunctionalityWhenOffline= */ false);
+    }
+
+    public DocumentsProviderHelper(
+            UserId userId,
+            String authority,
+            Context context,
+            String name,
+            boolean rootHasLimitedFunctionalityWhenOffline) {
         checkArgument(!TextUtils.isEmpty(authority));
         mUserId = userId;
         mAuthority = authority;
         mClient = userId.getContentResolver(context).acquireContentProviderClient(name);
+        assertNotNull(mClient);
+        mRootHasLimitedFunctionalityWhenOffline = rootHasLimitedFunctionalityWhenOffline;
     }
 
     public RootInfo getRoot(String documentId) throws RemoteException {
@@ -97,6 +146,19 @@ public class DocumentsProviderHelper {
             throw new RuntimeException("Can't load root for id=" + documentId , e);
         } finally {
             FileUtils.closeQuietly(cursor);
+        }
+    }
+
+    /**
+     * Delete the specified document.
+     * @param documentUri the URI of the document to delete.
+     * @return true if the document was deleted or false otherwise.
+     */
+    public boolean deleteDocument(Uri documentUri) {
+        try {
+            return DocumentsContract.deleteDocument(wrap(mClient), documentUri);
+        } catch (FileNotFoundException e) {
+            return false;
         }
     }
 
@@ -177,6 +239,17 @@ public class DocumentsProviderHelper {
             out.write(contents, 0, length);
         }
         waitForWrite();
+    }
+
+    /** Delete a single document, do nothing if it does not exist. */
+    public boolean deleteDocumentIfExists(Uri documentUri) {
+        try {
+            DocumentsContract.deleteDocument(wrap(mClient), documentUri);
+            return true;
+        } catch (FileNotFoundException e) {
+            Log.w(TAG, "Could not delete document: " + documentUri, e);
+            return false;
+        }
     }
 
     public void waitForWrite() throws RemoteException {
@@ -314,8 +387,14 @@ public class DocumentsProviderHelper {
             if (cursor == null) {
                 Log.w(TAG, "query() returned null cursor");
             } else {
-                Cursor wrapper = new RootCursorWrapper(mUserId, mAuthority, "totally-fake", cursor,
-                        maxCount);
+                Cursor wrapper =
+                        new RootCursorWrapper(
+                                mUserId,
+                                mAuthority,
+                                "totally-fake",
+                                mRootHasLimitedFunctionalityWhenOffline,
+                                cursor,
+                                maxCount);
                 while (wrapper.moveToNext()) {
                     children.add(DocumentInfo.fromDirectoryCursor(wrapper));
                 }
@@ -335,7 +414,14 @@ public class DocumentsProviderHelper {
                         null,
                         null,
                         null)) {
-            Cursor wrapper = new RootCursorWrapper(mUserId, mAuthority, root.rootId, cursor, 100);
+            Cursor wrapper =
+                    new RootCursorWrapper(
+                            mUserId,
+                            mAuthority,
+                            root.rootId,
+                            root.hasLimitedFunctionalityWhenOffline(),
+                            cursor,
+                            100);
             while (wrapper.moveToNext()) {
                 children.add(DocumentInfo.fromDirectoryCursor(wrapper));
             }
@@ -396,6 +482,27 @@ public class DocumentsProviderHelper {
         mClient.call("clear", args, configuration);
     }
 
+    /**
+     * A helper method for TestCloudProvider only. Sets the COLUMN_CONTENT_SYNC_STATE_FLAGS for the
+     * document with the given id.
+     */
+    public void setSyncState(String documentId, int syncState) throws RemoteException {
+        Bundle extras = new Bundle();
+        extras.putString(TestCloudProvider.METHOD_DOC_ID_EXTRA, documentId);
+        extras.putInt(TestCloudProvider.METHOD_STATE_EXTRA, syncState);
+        mClient.call(TestCloudProvider.SET_SYNC_STATE, null, extras);
+    }
+
+    /**
+     * A helper method for TestCloudProvider only. Nullifies the COLUMN_CONTENT_SYNC_STATE_FLAGS for
+     * the document with the given id.
+     */
+    public void nullifySyncState(String documentId) throws RemoteException {
+        Bundle extras = new Bundle();
+        extras.putString(TestCloudProvider.METHOD_DOC_ID_EXTRA, documentId);
+        mClient.call(TestCloudProvider.NULLIFY_SYNC_STATE, null, extras);
+    }
+
     public List<RootInfo> getRootList() throws RemoteException {
         List<RootInfo> list = new ArrayList<>();
         final Uri rootsUri = DocumentsContract.buildRootsUri(mAuthority);
@@ -418,5 +525,73 @@ public class DocumentsProviderHelper {
 
     public void cleanUp() {
         mClient.close();
+    }
+
+    /**
+     * A helper method for TestCloudProvider only. Cleans up the provider after testing by removing
+     * files added with createDocument().
+     *
+     * @throws RemoteException
+     */
+    public void cleanUpProvider() throws RemoteException {
+        mClient.call(TestCloudProvider.CLEAN_UP, null, null);
+    }
+
+    /**
+     * Retrieves a list of all documents in the trash.
+     *
+     * @return A {@link List} of {@link DocumentInfo} objects for each item in the trash.
+     * @throws Exception if there is an issue querying the content provider.
+     */
+    public List<DocumentInfo> getAllTrashItems(String rootId) throws Exception {
+        Uri uri = DocumentsContract.buildTrashDocumentsUri(mAuthority, rootId);
+        List<DocumentInfo> children = new ArrayList<>();
+        try (Cursor cursor = mClient.query(uri, null, null, null, null, null)) {
+            if (cursor == null) {
+                Log.w(TAG, "query() returned null cursor");
+            } else {
+                Cursor wrapper =
+                        new RootCursorWrapper(
+                                mUserId,
+                                mAuthority,
+                                "totally-fake",
+                                mRootHasLimitedFunctionalityWhenOffline,
+                                cursor,
+                                -1);
+                while (wrapper.moveToNext()) {
+                    children.add(DocumentInfo.fromDirectoryCursor(wrapper));
+                }
+            }
+        }
+        return children;
+    }
+
+    /** Sends a message to the provider to remove all summaries. See {@link TestSummaryProvider}. */
+    public void clearDocumentSummaries() throws RemoteException {
+        Bundle configuration = new Bundle();
+        configuration.putSerializable(
+                TestSummaryProvider.EXTRA_SUMMARIES, new HashMap<String, String>());
+        configure(null, configuration);
+    }
+
+    /**
+     * Sends a message to the provider to prepare summaries for the tests. See {@link
+     * TestSummaryProvider}.
+     */
+    public void setProviderSummaries(Map<String, String> summaries) throws RemoteException {
+        Bundle configuration = new Bundle();
+        configuration.putSerializable(
+                TestSummaryProvider.EXTRA_SUMMARIES, new HashMap<>(summaries));
+        configure(null, configuration);
+    }
+
+    /**
+     * Sends a message to the provider to mark the provider's root as empty (or not empty). See
+     * {@link TestSummaryProvider}.
+     */
+    public void setSummaryProviderIsEmpty(boolean isEmpty) throws RemoteException {
+        Bundle configuration = new Bundle();
+        configuration.putBoolean(TestSummaryProvider.EXTRA_IS_EMPTY, isEmpty);
+        configure(null, configuration);
     }
 }

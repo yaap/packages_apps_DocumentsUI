@@ -42,8 +42,7 @@ import org.junit.Test
 /** Tests UnpackJob. */
 @MediumTest
 internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
-    @get:Rule
-    val setFlags = OverrideFlagsRule()
+    @get:Rule val setFlags = OverrideFlagsRule()
 
     private data class Entry(val size: Long, val mimeType: String)
 
@@ -74,7 +73,8 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isTrue()
-            assertThat(msg).isEqualTo("Extracting “My Text File.txt” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("My Text File.txt")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(0)
             assertThat(requiredBytes).isEqualTo(0)
             assertThat(msRemaining).isLessThan(0)
@@ -111,7 +111,8 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isTrue()
-            assertThat(msg).isEqualTo("Extracting “My Archive.zip” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("My Archive.zip")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(0)
             assertThat(requiredBytes).isEqualTo(0)
             assertThat(msRemaining).isLessThan(0)
@@ -147,7 +148,8 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Extracting “hello.zip” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("hello.zip")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(110)
             assertThat(requiredBytes).isEqualTo(110)
             assertThat(msRemaining).isLessThan(0)
@@ -193,7 +195,8 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Extracting “hello.7z” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("hello.7z")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(110)
             assertThat(requiredBytes).isEqualTo(110)
             assertThat(msRemaining).isLessThan(0)
@@ -239,7 +242,8 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Extracting “hello.tar” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("hello.tar")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(110)
             assertThat(requiredBytes).isEqualTo(110)
             assertThat(msRemaining).isLessThan(0)
@@ -285,7 +289,8 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Extracting “hello.tgz” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("hello.tgz")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(110)
             assertThat(requiredBytes).isEqualTo(110)
             assertThat(msRemaining).isLessThan(0)
@@ -326,19 +331,21 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
         job.run()
         mJobListener.assertFailed()
         mJobListener.assertFailureCount(4)
-        assertThat(job.failedPaths).containsExactly(
-            "/Encrypted AES-128.txt",
-            "/Encrypted AES-192.txt",
-            "/Encrypted AES-256.txt",
-            "/Encrypted ZipCrypto.txt"
-        )
+        assertThat(job.failedPaths)
+            .containsExactly(
+                "/Encrypted AES-128.txt",
+                "/Encrypted AES-192.txt",
+                "/Encrypted AES-256.txt",
+                "/Encrypted ZipCrypto.txt",
+            )
 
         with(job.getJobProgress()) {
             assertThat(operationType).isEqualTo(OPERATION_UNPACK)
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isTrue()
-            assertThat(msg).isEqualTo("Extracting “different-encryptions.zip” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("different-encryptions.zip")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(23)
             assertThat(requiredBytes).isEqualTo(23)
             assertThat(msRemaining).isLessThan(0)
@@ -360,12 +367,7 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
     fun collisionForExtractionFolder() {
         val uri = createDocument("application/zip", "archives/zip/hello.zip")
         mDocs.createFolder(mSrcRoot, "hello")
-        assertTreeIs(
-            mutableMapOf(
-                "/hello.zip" to zipEntry(806),
-                "/hello" to dirEntry,
-            )
-        )
+        assertTreeIs(mutableMapOf("/hello.zip" to zipEntry(806), "/hello" to dirEntry))
 
         val job = createJob(uri)
 
@@ -391,17 +393,13 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isTrue()
-            assertThat(msg).isEqualTo("Extracting “hello.zip” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("hello.zip")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(0)
             assertThat(requiredBytes).isEqualTo(110)
         }
 
-        assertTreeIs(
-            mutableMapOf(
-                "/hello.zip" to zipEntry(806),
-                "/hello" to dirEntry,
-            )
-        )
+        assertTreeIs(mutableMapOf("/hello.zip" to zipEntry(806), "/hello" to dirEntry))
     }
 
     /** Tests with a ZIP archive containing colliding entries. */
@@ -429,21 +427,23 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
         // As a consequence, UnpackJob fails to extract some files from the archive.
         mJobListener.assertFailed()
         mJobListener.assertFailureCount(6)
-        assertThat(job.failedPaths).containsExactly(
-            "/pet/cat",
-            "/pet",
-            "/pet/cat/fish",
-            "/pet/cat",
-            "/pet",
-            "/pet/cat/fish"
-        )
+        assertThat(job.failedPaths)
+            .containsExactly(
+                "/pet/cat",
+                "/pet",
+                "/pet/cat/fish",
+                "/pet/cat",
+                "/pet",
+                "/pet/cat/fish",
+            )
 
         with(job.getJobProgress()) {
             assertThat(operationType).isEqualTo(OPERATION_UNPACK)
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isTrue()
-            assertThat(msg).isEqualTo("Extracting “file-dir-same-name.zip” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("file-dir-same-name.zip")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(0)
             assertThat(requiredBytes).isEqualTo(0)
             assertThat(msRemaining).isLessThan(0)
@@ -493,7 +493,8 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isTrue()
-            assertThat(msg).isEqualTo("Extracting “bad-crc.zip” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("bad-crc.zip")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(0)
             assertThat(requiredBytes).isEqualTo(0)
             assertThat(msRemaining).isLessThan(0)
@@ -501,12 +502,7 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
         }
 
         // The partially extracted file with a bad CRC should have been removed.
-        assertTreeIs(
-            mutableMapOf(
-                "/bad-crc.zip" to zipEntry(234),
-                "/bad-crc" to dirEntry,
-            )
-        )
+        assertTreeIs(mutableMapOf("/bad-crc.zip" to zipEntry(234), "/bad-crc" to dirEntry))
     }
 
     @Test
@@ -537,7 +533,8 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Extracting “bad-crc.zip” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("bad-crc.zip")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(62)
             assertThat(requiredBytes).isEqualTo(62)
             assertThat(msRemaining).isLessThan(0)
@@ -577,22 +574,16 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
         // The files with incorrect sizes should be detected.
         mJobListener.assertFailed()
         mJobListener.assertFailureCount(7)
-        assertThat(job.failedPaths).containsExactly(
-            "/0.txt",
-            "/1.txt",
-            "/2.txt",
-            "/4.txt",
-            "/5.txt",
-            "/6.txt",
-            "/7.txt"
-        )
+        assertThat(job.failedPaths)
+            .containsExactly("/0.txt", "/1.txt", "/2.txt", "/4.txt", "/5.txt", "/6.txt", "/7.txt")
 
         with(job.getJobProgress()) {
             assertThat(operationType).isEqualTo(OPERATION_UNPACK)
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isTrue()
-            assertThat(msg).isEqualTo("Extracting “bad-sizes.zip” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("bad-sizes.zip")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(3)
             assertThat(requiredBytes).isEqualTo(3)
             assertThat(msRemaining).isLessThan(0)
@@ -638,7 +629,8 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Extracting “bad-sizes.zip” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("bad-sizes.zip")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(28)
             assertThat(requiredBytes).isEqualTo(28)
             assertThat(msRemaining).isLessThan(0)
@@ -688,7 +680,8 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
             assertThat(id).isEqualTo(job.id)
             assertThat(state).isEqualTo(Job.STATE_COMPLETED)
             assertThat(hasFailures).isFalse()
-            assertThat(msg).isEqualTo("Extracting “empty.zip” to “TEST_ROOT_0”")
+            assertThat(filename).isEqualTo("empty.zip")
+            assertThat(numFiles).isEqualTo(1)
             assertThat(currentBytes).isEqualTo(0)
             assertThat(requiredBytes).isEqualTo(0)
             assertThat(msRemaining).isLessThan(0)
@@ -703,12 +696,7 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
             }
         }
 
-        assertTreeIs(
-            mutableMapOf(
-                "/empty.zip" to zipEntry(22),
-                "/empty" to dirEntry,
-            )
-        )
+        assertTreeIs(mutableMapOf("/empty.zip" to zipEntry(22), "/empty" to dirEntry))
     }
 
     /** Tests the various system notifications with a partially encrypted ZIP archive. */
@@ -742,7 +730,7 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
         with(job.getFailureNotification()) {
             assertThat(category).isEqualTo(CATEGORY_ERROR)
             with(extras) {
-                assertThat(getCharSequence(EXTRA_TITLE)).isEqualTo("Couldn’t extract 4 items")
+                assertThat(getCharSequence(EXTRA_TITLE)).isEqualTo("Couldn’t extract 4 files")
                 assertThat(getCharSequence(EXTRA_TEXT)).isEqualTo("Tap to view details")
             }
         }
@@ -764,7 +752,7 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
     private fun assertTreeIs(
         wantEntries: MutableMap<String, Entry>?,
         parentPath: String,
-        info: DocumentInfo
+        info: DocumentInfo,
     ) {
         val path = "$parentPath/${info.displayName}"
 
@@ -774,7 +762,8 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
                 throw AssertionError("Found unexpected file '$path'")
             }
 
-            assertWithMessage("For file '%s'", path).that(info.mimeType)
+            assertWithMessage("For file '%s'", path)
+                .that(info.mimeType)
                 .isEqualTo(wantEntry.mimeType)
 
             // Since the underlying DocumentProvider might report an incorrect size in
@@ -807,7 +796,9 @@ internal class UnpackJobTest : AbstractJobTest<UnpackJob>() {
     companion object {
         private const val TAG = "UnpackJobTest"
         private val dirEntry = Entry(-1, MIME_TYPE_DIR)
+
         private fun textEntry(size: Long) = Entry(size, "text/plain")
+
         private fun zipEntry(size: Long) = Entry(size, "application/zip")
     }
 }

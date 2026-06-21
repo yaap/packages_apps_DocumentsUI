@@ -15,7 +15,11 @@
  */
 package com.android.documentsui.base;
 
+import android.content.ContentResolver;
 import android.net.Uri;
+import android.provider.MediaStore;
+
+import androidx.annotation.Nullable;
 
 import com.android.documentsui.archives.ArchivesProvider;
 
@@ -39,11 +43,16 @@ public final class Providers {
     public static final String ROOT_ID_VIDEOS = "videos_root";
     public static final String ROOT_ID_AUDIO = "audio_root";
     public static final String ROOT_ID_DOCUMENTS = "documents_root";
+    public static final String ROOT_ID_FILES = "files_root";
 
     public static final String AUTHORITY_MTP = "com.android.mtp.documents";
     public static final String AUTHORITY_BUGREPORT = "com.android.shell.documents";
 
     public static final String TRASH_ROOT_ID = "trash_root";
+    public static final String HOME_SCREEN_SHORTCUT_TITLE = "Home screen";
+    public static final String DOWNLOAD_SHORTCUT_TITLE = "Download";
+    public static final String DOWNLOAD_DOCUMENT_ID = "primary:Download";
+    public static final String RECENTS_ROOT_URI = "content://com.android.documentsui/recents";
 
     private static final String DOCSUI_PACKAGE = "com.android.documentsui";
     private static final Set<String> SYSTEM_AUTHORITIES = Set.of(
@@ -56,9 +65,26 @@ public final class Providers {
         return uri != null && ArchivesProvider.AUTHORITY.equals(uri.getAuthority());
     }
 
+    public static boolean isMediaStoreUri(Uri uri) {
+        return uri != null
+                && ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())
+                && MediaStore.AUTHORITY.equals(uri.getAuthority());
+    }
+
+    public static boolean isSameProvider(@Nullable Uri a, @Nullable Uri b) {
+        return a != null
+                && b != null
+                && a.getScheme().equals(b.getScheme())
+                && a.getAuthority().equals(b.getAuthority());
+    }
+
     public static boolean isSystemProvider(String authority) {
         return SYSTEM_AUTHORITIES.contains(authority)
                 || authority == null  // Recents
                 || authority.startsWith(DOCSUI_PACKAGE);  // covers internal and test providers
+    }
+
+    public static boolean isRecentsRootUri(@Nullable Uri uri) {
+        return uri != null && RECENTS_ROOT_URI.equals(uri.toString());
     }
 }

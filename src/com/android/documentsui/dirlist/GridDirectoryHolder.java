@@ -18,23 +18,21 @@ package com.android.documentsui.dirlist;
 
 import static com.android.documentsui.DevicePolicyResources.Drawables.Style.SOLID_COLORED;
 import static com.android.documentsui.DevicePolicyResources.Drawables.WORK_PROFILE_ICON;
-import static com.android.documentsui.base.DocumentInfo.getCursorString;
 import static com.android.documentsui.util.FlagUtils.isSingleClickToSelectEnabled;
 import static com.android.documentsui.util.Material3Config.getRes;
 
 import android.app.admin.DevicePolicyManager;
 import android.content.Context;
-import android.database.Cursor;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.provider.DocumentsContract;
-import android.provider.DocumentsContract.Document;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.recyclerview.selection.ItemDetailsLookup.ItemDetails;
 
@@ -42,6 +40,7 @@ import com.android.documentsui.ConfigStore;
 import com.android.documentsui.DocumentsApplication;
 import com.android.documentsui.IconUtils;
 import com.android.documentsui.R;
+import com.android.documentsui.base.DocumentInfo;
 import com.android.documentsui.base.Events;
 import com.android.documentsui.base.State;
 import com.android.documentsui.base.UserId;
@@ -145,17 +144,13 @@ final class GridDirectoryHolder extends DocumentHolder {
     /**
      * Bind this view to the given document for display.
      *
-     * @param cursor  Pointing to the item to be bound.
+     * @param doc The document to be bound.
      * @param modelId The model ID of the item.
      */
     @Override
-    public void bind(Cursor cursor, String modelId) {
-        assert (cursor != null);
-
+    public void bind(
+            DocumentInfo doc, String modelId, @Nullable String summary, boolean justFinishedSync) {
         this.mModelId = modelId;
-
-        mTitle.setText(
-                getCursorString(cursor, Document.COLUMN_DISPLAY_NAME),
-                TextView.BufferType.SPANNABLE);
+        mTitle.setText(doc.displayName, TextView.BufferType.SPANNABLE);
     }
 }
